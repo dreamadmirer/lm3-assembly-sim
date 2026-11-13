@@ -550,6 +550,7 @@ class App {
     this.codeArea.value = programFor({ cfg: obj.userData.cfg, binId: this.targetBin, params: this.params });
     this.codeDirty = false;
     this.highlightCode();
+    this.showCodeMsg('可编辑参数后运行', '');
   }
 
   highlightCode() {
@@ -726,6 +727,7 @@ class App {
     $('stateDot').parentElement.classList.toggle('busy', v);
     $('btnPick').disabled = v || !this.selected;
     $('btnSortAll').disabled = v && !this.sorting;
+    if ($('btnRunCode')) $('btnRunCode').disabled = v || !this.selected;
   }
 
   updateObjectList() {

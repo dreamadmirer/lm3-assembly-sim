@@ -125,16 +125,14 @@ export function programFor(plan) {
   const name = plan.cfg.name;
   const bin = plan.binId;
   const f = (v) => Number(v).toFixed(2);
-  return `# LM3 抓取放置程序 · ${name} → ${bin} 盒
-# 修改参数或调整指令顺序后点击「运行」
-
-APPROACH_H = ${f(p.approachH)}   # 预抓取高度 m
-GRASP_RATIO = ${f(p.graspRatio)}  # 抓取高度比例
-TRANSIT_Z = ${f(p.transitZ)}     # 转运高度 m
-PLACE_Z = ${f(p.placeZ)}       # 放置高度 m
-RETREAT_H = ${f(p.retreatH)}     # 退回高度 m
-T_JOINT = ${f(p.tJoint)}      # 关节运动时长 s
-T_LINEAR = ${f(p.tLinear)}      # 直线运动时长 s
+  return `# ${name} → ${bin} 盒 · 改参数或指令后点「运行」
+APPROACH_H = ${f(p.approachH)}   # 接近高度 m
+GRASP_RATIO = ${f(p.graspRatio)}  # 抓取比例
+TRANSIT_Z = ${f(p.transitZ)}     # 转运高度
+PLACE_Z = ${f(p.placeZ)}       # 放置高度
+RETREAT_H = ${f(p.retreatH)}     # 退回高度
+T_JOINT = ${f(p.tJoint)}      # 关节时长 s
+T_LINEAR = ${f(p.tLinear)}      # 直线时长 s
 
 move_j approach
 move_l grasp
