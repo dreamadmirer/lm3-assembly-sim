@@ -250,6 +250,32 @@ input[type="range"]::-webkit-slider-thumb {
 
 .hidden { display: none !important; }
 
+/* 载入遮罩 */
+.loader {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: radial-gradient(80% 60% at 50% 40%, #f7f9fc, #e6ebf2 100%);
+  transition: opacity .45s ease, visibility .45s ease;
+}
+.loader.hide { opacity: 0; visibility: hidden; }
+.loader-card {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 26px 34px; border-radius: 18px;
+  background: rgba(255,255,255,.86); border: 1px solid rgba(15,23,42,.06);
+  box-shadow: 0 18px 44px rgba(15,23,42,.10);
+}
+.loader-card b { font-size: 14px; letter-spacing: .3px; }
+.loader-card p { margin: 0; font-size: 12px; color: var(--muted); }
+.spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2.5px solid rgba(13,148,136,.18);
+  border-top-color: var(--accent);
+  animation: spin .85s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loader.error .spinner { display: none; }
+.loader.error .loader-card b { color: #b91c1c; }
+
 @media (max-width: 1180px) {
   .panel-left, .logbar { width: 260px; }
   .panel-right { width: 250px; }

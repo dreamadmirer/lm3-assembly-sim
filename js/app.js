@@ -71,7 +71,10 @@ class App {
     this.world = buildWorld(this.scene);
 
     this.robot = new Robot(this.scene);
-    await this.robot.load('./assets/lm3.glb');
+    await this.robot.load('./assets/lm3.glb', (p) => {
+      const t = $('loaderText');
+      if (t) t.textContent = `解析 LM3 模型 ${Math.round(p * 100)}%`;
+    });
     this.robot.setJoints(POSE_READY.map((d) => d * D2R));
     this.robot.setGripper(0.075, true);
 
@@ -86,6 +89,14 @@ class App {
 
     addEventListener('resize', () => this.onResize());
     this.loop();
+
+    const loader = $('loader');
+    if (loader) {
+      requestAnimationFrame(() => {
+        loader.classList.add('hide');
+        setTimeout(() => loader.remove(), 600);
+      });
+    }
 
     window.__app = this;
     const view = new URLSearchParams(location.search).get('view');
@@ -651,6 +662,13 @@ class App {
 const app = new App();
 app.init().catch((err) => {
   console.error(err);
+  const loader = document.getElementById('loader');
+  if (loader) {
+    loader.classList.add('error');
+    const t = document.getElementById('loaderText');
+    if (t) t.textContent = String(err.message || err);
+    return;
+  }
   document.body.insertAdjacentHTML('beforeend',
     `<div style="position:fixed;inset:0;display:grid;place-items:center;background:#eef1f6;font:14px system-ui;color:#0f172a">
       <div style="text-align:center"><b>加载失败</b><p style="color:#64748b">${String(err.message || err)}</p>

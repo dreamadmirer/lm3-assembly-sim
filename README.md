@@ -6,6 +6,8 @@
 - 运动学：由 STEP 模型几何反求的 6 轴串联链，自带解析前向运动学与阻尼最小二乘（DLS）逆运动学
 - 无需安装服务、无需联网、无需后端，双击 `start.bat` 即可运行
 
+**在线演示**：<https://dreamadmirer.github.io/lm3-assembly-sim/>
+
 ![平台界面](screenshots/overview.png)
 
 ---

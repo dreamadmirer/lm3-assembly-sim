@@ -32,8 +32,12 @@ export class Robot {
     this.busy = false;
   }
 
-  async load(url) {
-    const gltf = await new GLTFLoader().loadAsync(url);
+  async load(url, onProgress) {
+    const gltf = await new Promise((resolve, reject) => {
+      new GLTFLoader().load(url, resolve, (e) => {
+        if (onProgress && e.total) onProgress(Math.min(1, e.loaded / e.total));
+      }, reject);
+    });
     const byName = new Map();
     gltf.scene.traverse((o) => { if (o.isMesh) byName.set(o.name, o); });
 
