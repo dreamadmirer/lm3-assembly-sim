@@ -25,6 +25,16 @@ python -m http.server 8123
 
 > 页面使用 ES Module 与 `fetch` 加载 GLB 模型，因此必须通过 **http://** 访问；直接双击 `index.html`（file://）会被浏览器拦截。
 
+### 部署到 GitHub Pages
+
+本仓库已按「main 分支根目录」发布，更新方式：
+
+1. 提交并推送到 `main`；
+2. 首次部署需在仓库 **Settings → Pages** 中把 Source 设为 `Deploy from a branch`、分支 `main`、目录 `/`；
+3. 约 1 分钟后访问 `https://<用户名>.github.io/lm3-assembly-sim/`。
+
+> 仓库内已包含 `.nojekyll`，可避免 Jekyll 处理 `vendor/`、`js/` 等目录。
+
 浏览器要求：Chrome / Edge / Firefox 等支持 WebGL2 的现代浏览器。
 
 ---
