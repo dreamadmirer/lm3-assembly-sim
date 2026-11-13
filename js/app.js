@@ -60,7 +60,7 @@ class App {
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.42;
+    this.scene.environmentIntensity = 0.58;
 
     this.world = buildWorld(this.scene);
     this.viz = new PathViz(this.scene);
@@ -95,6 +95,15 @@ class App {
     }
 
     window.__app = this;
+    const cam = new URLSearchParams(location.search).get('cam');
+    if (cam) {
+      const v = cam.split(',').map(Number);
+      if (v.length === 6 && v.every((n) => Number.isFinite(n))) {
+        this.camera.position.set(v[0], v[1], v[2]);
+        this.controls.target.set(v[3], v[4], v[5]);
+        this.controls.update();
+      }
+    }
     const view = new URLSearchParams(location.search).get('view');
     if (view) setTimeout(() => this.setView(view), 300);
     if (new URLSearchParams(location.search).has('auto')) {

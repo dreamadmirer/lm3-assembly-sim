@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { JOINT_LIMITS } from './config.js';
 
 /* ---------- 由 CAD 提取的关节轴线（模型坐标，单位 m，Z 轴向上） ---------- */
-const JOINTS_MODEL = [
+export const JOINTS_MODEL = [
   { p: [0.0, 0.0, 0.0975], a: [0, 0, 1] },
   { p: [-0.04596, 0.04596, 0.21583], a: [-0.7071, 0.7071, 0] },
   { p: [-0.09971, 0.09971, 0.49583], a: [-0.7071, 0.7071, 0] },

@@ -39,7 +39,7 @@ function buildTable() {
   const g = new THREE.Group();
   const { width, depth, thickness, center } = TABLE;
 
-  const topMat = new THREE.MeshPhysicalMaterial({ color: 0xf4f6fa, roughness: 0.6, metalness: 0.04, clearcoat: 0.18 });
+  const topMat = new THREE.MeshPhysicalMaterial({ color: 0xeaedf4, roughness: 0.62, metalness: 0.04, clearcoat: 0.18 });
   const top = new THREE.Mesh(new THREE.BoxGeometry(width, depth, thickness), topMat);
   top.position.set(center[0], center[1], -thickness / 2);
   top.castShadow = true; top.receiveShadow = true;
@@ -208,8 +208,8 @@ export function buildWorld(scene) {
   key.shadow.camera.right = 1.3;
   key.shadow.camera.top = 1.3;
   key.shadow.camera.bottom = -1.3;
-  key.shadow.bias = -0.0006;
-  key.shadow.normalBias = 0.012;
+  key.shadow.bias = -0.0004;
+  key.shadow.normalBias = 0.022;
   scene.add(key);
 
   const fill = new THREE.DirectionalLight(0xdfe9ff, 0.55);
@@ -222,7 +222,7 @@ export function buildWorld(scene) {
 
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(24, 24),
-    new THREE.MeshStandardMaterial({ color: 0xccd4e0, roughness: 0.95, metalness: 0 })
+    new THREE.MeshStandardMaterial({ color: 0xc6cfdc, roughness: 0.95, metalness: 0 })
   );
   ground.position.z = -0.72 - TABLE.thickness;
   ground.receiveShadow = true;

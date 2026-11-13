@@ -1,19 +1,27 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { Kinematics, TOOL_OFFSET, FLANGE_OFFSET } from './kinematics.js';
-import { ROBOT_BASE, ROBOT_YAW } from './config.js';
+import { Kinematics, JOINTS_MODEL, TOOL_OFFSET, FLANGE_OFFSET } from './kinematics.js';
+import { ROBOT_BASE, ROBOT_YAW, POSE_READY } from './config.js';
 
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
 
 const MAT = {
-  base: new THREE.MeshPhysicalMaterial({ color: 0x4b535f, roughness: 0.4, metalness: 0.45, clearcoat: 0.3 }),
-  shell: new THREE.MeshPhysicalMaterial({ color: 0xf3f5f8, roughness: 0.32, metalness: 0.06, clearcoat: 0.55, clearcoatRoughness: 0.35 }),
-  flange: new THREE.MeshPhysicalMaterial({ color: 0xd7dde5, roughness: 0.3, metalness: 0.55 }),
-  dark: new THREE.MeshPhysicalMaterial({ color: 0x23282f, roughness: 0.42, metalness: 0.35 }),
-  finger: new THREE.MeshPhysicalMaterial({ color: 0x9aa4b2, roughness: 0.28, metalness: 0.7 }),
-  accent: new THREE.MeshPhysicalMaterial({ color: 0x0f9d8f, roughness: 0.35, metalness: 0.25 }),
+  // 亮面注塑白（参考 LEBAI LM3 实机：高光白 + 清漆）
+  shell: new THREE.MeshPhysicalMaterial({
+    color: 0xfbfcfe, roughness: 0.26, metalness: 0.02,
+    clearcoat: 0.55, clearcoatRoughness: 0.18, envMapIntensity: 0.9,
+  }),
+  base: null, // 与壳体同色，见下方赋值
+  // 关节分隔环带：浅灰
+  band: new THREE.MeshPhysicalMaterial({ color: 0xb2b8c1, roughness: 0.36, metalness: 0.35, clearcoat: 0.2 }),
+  flange: new THREE.MeshPhysicalMaterial({ color: 0xc7ced7, roughness: 0.28, metalness: 0.65 }),
+  dark: new THREE.MeshPhysicalMaterial({ color: 0x2a2f37, roughness: 0.4, metalness: 0.4 }),
+  // 夹爪指：乐白夹爪的红色阳极氧化铝
+  finger: new THREE.MeshPhysicalMaterial({ color: 0xa8342c, roughness: 0.28, metalness: 0.72, clearcoat: 0.2 }),
+  accent: new THREE.MeshPhysicalMaterial({ color: 0xc0392b, roughness: 0.32, metalness: 0.5 }),
 };
+MAT.base = MAT.shell;
 
 export class Robot {
   constructor(scene) {
@@ -45,11 +53,11 @@ export class Robot {
     for (const name of order) {
       const src = byName.get(name);
       if (!src) continue;
-      const mesh = new THREE.Mesh(src.geometry, name === 'ARM0' ? MAT.base : name === 'ARM6' ? MAT.flange : MAT.shell);
+      const mesh = new THREE.Mesh(src.geometry, MAT.shell);
       mesh.name = name;
       mesh.matrixAutoUpdate = false;
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.receiveShadow = false;
       mesh.frustumCulled = false;
       this.root.add(mesh);
       this.links.push(mesh);
@@ -68,8 +76,134 @@ export class Robot {
     this.holder.position.set(0, 0, TOOL_OFFSET - FLANGE_OFFSET);
     this.gripper.add(this.holder);
 
+    this.buildLivery();
     this.setJoints([0, 0, 0, 0, 0, 0]);
     return this;
+  }
+
+  /* ---- 涂装：关节灰色环带 + 基座底圈 + LEBAI 标识 ---- */
+  buildLivery() {
+    const J = JOINTS_MODEL; // 模型坐标
+    const radial = [0.046, 0.046, 0.046, 0.0375, 0.0365, 0.0315];
+    const heights = [0.007, 0.009, 0.009, 0.008, 0.008, 0.007];
+    const up = new THREE.Vector3(0, 1, 0);
+    const bandGeoCache = new Map();
+
+    for (let i = 0; i < 6; i++) {
+      const parent = this.links[i]; // 关节 i 的环带挂在上一级连杆上
+      if (!parent) continue;
+      const r = radial[i] + 0.0028;
+      const key = `${r}_${heights[i]}`;
+      let geo = bandGeoCache.get(key);
+      if (!geo) {
+        geo = new THREE.CylinderGeometry(r, r, heights[i], 56, 1, true);
+        bandGeoCache.set(key, geo);
+      }
+      const band = new THREE.Mesh(geo, MAT.band);
+      band.position.set(...J[i].p);
+      const axis = new THREE.Vector3(...J[i].a).normalize();
+      band.quaternion.setFromUnitVectors(up, axis);
+      band.castShadow = false;
+      band.receiveShadow = false;
+      parent.add(band);
+    }
+
+    // 基座底圈
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.0722, 0.0722, 0.012, 64, 1, true), MAT.band);
+    ring.position.set(0, 0, 0.008);
+    ring.castShadow = true;
+    this.links[0].add(ring);
+
+    // LEBAI 标识（按工作位摆放，便于选择朝向镜头的一侧）
+    this.setJoints(POSE_READY.map((d) => (d * Math.PI) / 180));
+    const logoMat = this.makeLogoMaterial();
+    this.addLogo(this.links[2], new THREE.Vector3(...J[1].p), new THREE.Vector3(...J[2].p), 0.080, logoMat, 0.22);
+    this.addLogo(this.links[3], new THREE.Vector3(...J[2].p), new THREE.Vector3(...J[3].p), 0.086, logoMat, 0.58);
+  }
+
+  makeLogoMaterial() {
+    const c = document.createElement('canvas');
+    c.width = 800; c.height = 180;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height);
+    const red = '#cf2318';
+    g.fillStyle = red;
+    g.textBaseline = 'middle';
+    g.font = '900 132px "Arial Black", Arial, sans-serif';
+    g.fillText('LEBAI', 6, 96);
+    g.font = '800 104px "PingFang SC", "Microsoft YaHei", sans-serif';
+    g.fillText('乐白', 468, 100);
+    // 品牌环形标记
+    g.strokeStyle = red;
+    g.lineWidth = 15;
+    g.beginPath();
+    g.arc(700, 96, 36, Math.PI * 0.35, Math.PI * 1.95);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(730, 66);
+    g.lineTo(742, 30);
+    g.stroke();
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    return new THREE.MeshStandardMaterial({
+      map: tex, transparent: true, roughness: 0.42, metalness: 0.05,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    });
+  }
+
+  /** 用射线打到连杆真实表面，把贴标放在命中点，保证贴合不穿模 */
+  addLogo(mesh, pStart, pEnd, width, mat, t = 0.5) {
+    if (!mesh) return;
+    const dLocal = new THREE.Vector3().subVectors(pEnd, pStart).normalize();
+    const midLocal = new THREE.Vector3().lerpVectors(pStart, pEnd, t);
+    mesh.updateMatrixWorld(true);
+
+    const midWorld = midLocal.clone().applyMatrix4(mesh.matrixWorld);
+    const dWorld = dLocal.clone().transformDirection(mesh.matrixWorld).normalize();
+    const camDir = new THREE.Vector3(0.55, 0.78, 0.3).normalize();
+
+    const hits = [];
+    const up = new THREE.Vector3(0, 0, 1);
+    let ref = new THREE.Vector3().crossVectors(dWorld, up);
+    if (ref.lengthSq() < 1e-6) ref = new THREE.Vector3().crossVectors(dWorld, new THREE.Vector3(1, 0, 0));
+    ref.normalize();
+
+    for (let i = 0; i < 36; i++) {
+      const dirOut = ref.clone().applyAxisAngle(dWorld, (i / 36) * Math.PI * 2).normalize();
+      const origin = midWorld.clone().addScaledVector(dirOut, 0.6);
+      const ray = new THREE.Raycaster(origin, dirOut.clone().negate(), 0, 1.2);
+      const hit = ray.intersectObject(mesh, false)[0];
+      if (!hit || !hit.face) continue;
+      const nWorld = hit.face.normal.clone().transformDirection(mesh.matrixWorld).normalize();
+      if (nWorld.dot(dirOut) < 0.4) continue;
+      if (Math.abs(nWorld.dot(dWorld)) > 0.5) continue;
+      hits.push({ score: nWorld.dot(camDir), point: hit.point.clone(), normal: nWorld.clone() });
+    }
+    if (!hits.length) return;
+
+    hits.sort((a, b) => b.score - a.score);
+    const chosen = [hits[0]];
+    // 再补一个朝向相反的面，正反都可见
+    const back = hits.find((h) => h.normal.dot(chosen[0].normal) < -0.2);
+    if (back) chosen.push(back);
+
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const h = width / 4.44;
+    for (const c of chosen) {
+      const pLocal = c.point.clone().applyMatrix4(inv);
+      const nLocal = c.normal.clone().transformDirection(inv).normalize();
+      const xAxis = dLocal.clone().addScaledVector(nLocal, -dLocal.dot(nLocal)).normalize();
+      const yAxis = new THREE.Vector3().crossVectors(nLocal, xAxis).normalize();
+
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(width, h), mat);
+      plane.position.copy(pLocal).addScaledVector(nLocal, 0.0012);
+      plane.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, nLocal));
+      plane.renderOrder = 3;
+      mesh.add(plane);
+      this._logoCount = (this._logoCount || 0) + 1;
+    }
   }
 
   makeFlangeFrame() {
@@ -90,7 +224,7 @@ export class Robot {
     const add = (geo, mat, pos, rot) => {
       const m = new THREE.Mesh(geo, mat);
       m.castShadow = true;
-      m.receiveShadow = true;
+      m.receiveShadow = false;
       if (pos) m.position.set(...pos);
       if (rot) m.rotation.set(...rot);
       g.add(m);
@@ -108,7 +242,7 @@ export class Robot {
     for (const s of [-1, 1]) {
       const f = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.030, 0.062), MAT.finger);
       f.castShadow = true;
-      f.receiveShadow = true;
+      f.receiveShadow = false;
       f.position.set(s * 0.045, 0, 0.104);
       g.add(f);
       this.fingers.push({ mesh: f, side: s });
