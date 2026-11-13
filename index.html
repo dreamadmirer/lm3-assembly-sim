@@ -107,12 +107,32 @@
   <button data-view="iso" class="active">等轴</button>
   <button data-view="front">正视</button>
   <button data-view="top">俯视</button>
+  <div class="vb-sep"></div>
+  <button id="btnTrail" class="toggle on" title="显示/隐藏 TCP 运行轨迹">轨迹</button>
 </div>
 
 <footer class="logbar">
   <div class="log-head">运行日志</div>
   <ul id="log"></ul>
 </footer>
+
+<section class="codepanel" id="codePanel">
+  <header class="cp-head">
+    <span class="cp-dot"></span>
+    <b>任务程序</b>
+    <em id="codeTarget">—</em>
+    <button class="cp-btn primary" id="btnRunCode">运行</button>
+    <button class="cp-btn" id="btnResetCode">重置</button>
+    <button class="cp-btn icon" id="btnFold" title="收起/展开">▾</button>
+  </header>
+  <div class="cp-body">
+    <div class="cp-edit">
+      <pre class="cp-hl" id="codeHl" aria-hidden="true"></pre>
+      <textarea class="cp-area" id="codeArea" spellcheck="false" wrap="off"></textarea>
+    </div>
+  </div>
+  <footer class="cp-foot"><span id="codeMsg">参数与指令均可编辑，改完点「运行」</span></footer>
+</section>
 
 <div class="toast" id="toast"></div>
 

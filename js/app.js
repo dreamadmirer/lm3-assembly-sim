@@ -4,6 +4,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Robot } from './robot.js';
 import { buildWorld } from './scene.js';
 import { BINS, OBJECTS, POSE_READY } from './config.js';
+import { PathViz } from './pathviz.js';
+import { planTask, planLength, programFor, parseProgram, DEFAULT_PARAMS, STEP_COLORS } from './planner.js';
 
 window.__errors = [];
 addEventListener('error', (e) => window.__errors.push('ERR ' + (e.message || e.type)));
@@ -16,18 +18,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
 
-function graspWidth(cfg) {
-  switch (cfg.type) {
-    case 'cube': return cfg.size[0];
-    case 'cylinder': return cfg.radius * 2;
-    case 'hex': return cfg.radius * Math.sqrt(3);
-    case 'tri': return cfg.radius * 1.55;
-    case 'sphere': return cfg.radius * 2;
-    case 'lblock': return cfg.size[0] * 0.72;
-    default: return 0.06;
-  }
-}
-
 class App {
   constructor() {
     this.scene = new THREE.Scene();
@@ -39,6 +29,10 @@ class App {
     this.targetBin = 'A';
     this.stats = { done: 0, attempts: 0, lastCycle: null, slots: { A: 0, B: 0 } };
     this.teachPoints = [];
+    this.viz = null;
+    this.trailOn = true;
+    this.codeDirty = false;
+    this.params = { ...DEFAULT_PARAMS };
   }
 
   async init() {
@@ -53,10 +47,10 @@ class App {
 
     this.camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.05, 60);
     this.camera.up.set(0, 0, 1);
-    this.camera.position.set(1.05, 1.95, 0.98);
+    this.camera.position.set(1.16, 2.12, 1.06);
 
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(0.0, 0.03, 0.26);
+    this.controls.target.set(0.0, 0.02, 0.27);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.075;
     this.controls.minDistance = 0.7;
@@ -69,6 +63,7 @@ class App {
     this.scene.environmentIntensity = 0.42;
 
     this.world = buildWorld(this.scene);
+    this.viz = new PathViz(this.scene);
 
     this.robot = new Robot(this.scene);
     await this.robot.load('./assets/lm3.glb', (p) => {
@@ -83,6 +78,7 @@ class App {
 
     this.buildUI();
     this.bindEvents();
+    this.buildCodePanel();
     this.selectBin('A');
     this.log('仿真环境已加载 · LM3 模型解析完成（7 连杆 / 6 关节）');
     this.log('就绪：选择零件后执行抓取，或切换到自动分拣');
@@ -103,6 +99,29 @@ class App {
     if (view) setTimeout(() => this.setView(view), 300);
     if (new URLSearchParams(location.search).has('auto')) {
       setTimeout(() => this.sortAll(), 500);
+    }
+    if (new URLSearchParams(location.search).has('selftest2')) {
+      setTimeout(async () => {
+        const obj = this.world.objects[3];
+        const t0 = performance.now();
+        const ok = await this.pickAndPlace(obj, 'A', { params: { ...this.params, tJoint: 0.08, tLinear: 0.08 } });
+        document.title = `RUN ${ok ? 'OK' : 'FAIL'} ${((performance.now() - t0) / 1000).toFixed(1)}s done=${this.stats.done} trail=${this.viz.trailLength().toFixed(2)} err=${(window.__errors || []).join('|')}`;
+      }, 1200);
+    }
+    if (new URLSearchParams(location.search).has('selftest')) {
+      setTimeout(() => {
+        const obj = this.world.objects[0];
+        const plan = planTask({
+          obj, bin: BINS[this.targetBin], slot: this.nextSlot(this.targetBin), params: this.params, robot: this.robot,
+        });
+        if (plan.error) {
+          document.title = `SELFTEST FAIL ${plan.error}`;
+          return;
+        }
+        plan.waypoints.forEach((pt, i) => this.viz.addWaypoint(pt, i));
+        this.viz.drawPlanLines(plan.waypoints);
+        document.title = `SELFTEST OK ${plan.waypoints.length}pts ${plan.steps.length}steps L=${planLength(plan.waypoints).toFixed(2)}`;
+      }, 900);
     }
   }
 
@@ -197,13 +216,20 @@ class App {
     $('btnPlay').onclick = () => this.playTeach();
 
     // 视角
-    document.querySelectorAll('.viewbar button').forEach((btn) => {
+    document.querySelectorAll('.viewbar button[data-view]').forEach((btn) => {
       btn.onclick = () => {
-        document.querySelectorAll('.viewbar button').forEach((b) => b.classList.remove('active'));
+        document.querySelectorAll('.viewbar button[data-view]').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         this.setView(btn.dataset.view);
       };
     });
+
+    $('btnTrail').onclick = () => {
+      this.trailOn = !this.trailOn;
+      this.viz.setTrailVisible(this.trailOn);
+      $('btnTrail').classList.toggle('on', this.trailOn);
+      this.log(this.trailOn ? '轨迹显示：开启' : '轨迹显示：关闭');
+    };
 
     // 画布点选
     const canvas = $('view');
@@ -278,6 +304,7 @@ class App {
     $('btnPick').disabled = false;
     const cfg = obj.userData.cfg;
     this.log(`选中零件：${cfg.name}（${cfg.category === 'round' ? '回转体' : '多面体'}）`);
+    this.refreshProgram(true);
   }
 
   selectBin(id) {
@@ -293,6 +320,7 @@ class App {
       ring.position.set(bin.position.x, bin.position.y, 0.0018);
       ring.visible = true;
     }
+    if (this.codeArea) this.refreshProgram(true);
   }
 
   syncSliders() {
@@ -347,79 +375,87 @@ class App {
 
   async pickAndPlace(obj, binId, opts = {}) {
     if (this.busy) return false;
-    const cfg = obj.userData.cfg;
-    const h = obj.userData.height;
     const t0 = performance.now();
+    const cfg = obj.userData.cfg;
 
     if (this.selected) this.selected.userData.ring.material.opacity = 0;
     this.selected = null;
     this.objItems.forEach((li) => li.classList.remove('active'));
     $('btnPick').disabled = true;
-    this.setBusy(true, `搬运 ${cfg.name}`);
 
-    const yaw = obj.rotation.z;
-    const gx = obj.position.x;
-    const gy = obj.position.y;
-    const graspZ = h * 0.52;
-    const preZ = Math.min(h + 0.13, 0.3);
-
-    const width = graspWidth(cfg);
-    const open = Math.min(0.094, width + 0.012);
-    this.robot.setGripper(open);
-    await sleep(180);
-
-    // 1. 预抓取
-    let ok = await this.approach(new THREE.Vector3(gx, gy, preZ), yaw, 1.25);
-    if (!ok) return this.fail('预抓取位姿不可达');
-
-    // 2. 下降到抓取位
-    await this.robot.moveL(new THREE.Vector3(gx, gy, graspZ), yaw, 0, 0.55);
-    await sleep(90);
-
-    // 3. 夹紧并吸附
-    this.robot.setGripper(Math.max(0.016, width - 0.002));
-    await sleep(420);
-    this.robot.attach(obj);
-    obj.userData.busy = true;
-    this.log(`夹爪闭合 ${(this.robot.gripperOpen * 1000).toFixed(0)} mm · 抓取 ${cfg.name}`);
-
-    // 4. 提升
-    await this.robot.moveL(new THREE.Vector3(gx, gy, preZ), yaw, 0, 0.5);
-
-    // 5. 搬运到料盒上方
+    const params = { ...DEFAULT_PARAMS, ...(opts.params || {}) };
+    this.params = params;
     const slot = this.nextSlot(binId);
-    const bin = BINS[binId];
-    const px = bin.pos[0] + slot.dx;
-    const py = bin.pos[1] + slot.dy;
-    const placeZ = h * 0.5 + 0.06;
+    const plan = planTask({
+      obj, bin: BINS[binId], slot, params, robot: this.robot, steps: opts.steps,
+    });
+    if (plan.error) return this.fail(plan.error);
 
-    const transitZ = 0.27;
-    const tr = this.robot.solveFlexible(new THREE.Vector3(px, py, transitZ), yaw + (slot.yaw || 0));
-    if (!tr) return this.fail('搬运位姿不可达');
-    await this.robot.moveJ(tr.sol.q, 1.2);
-    const pYaw = tr.yaw;
+    this.setBusy(true, '路径规划');
+    await this.animatePlanning(plan);
 
-    // 6. 下放
-    const pl = this.robot.solveFlexible(new THREE.Vector3(px, py, placeZ), pYaw, { dYaw: [0], dZ: [0, 0.02] });
-    if (!pl) return this.fail('放置位姿不可达');
-    await this.robot.moveL(new THREE.Vector3(px, py, pl.z), pYaw, 0, 0.6);
+    this.setBusy(true, `搬运 ${cfg.name}`);
+    this.robot.setGripper(Math.min(0.094, plan.width + params.openGap));
+    await sleep(160);
 
-    // 7. 松开
-    this.robot.setGripper(0.092);
-    await sleep(240);
-    this.robot.releaseTo(this.scene);
-    obj.userData.busy = false;
-    obj.userData.inBin = binId;
-    this.stats.slots[binId] += 1;
+    this.viz.beginTrail();
+    this.viz.setTrailVisible(this.trailOn);
+    let attached = false;
+    let failed = null;
 
-    // 8. 落入料盒
-    await this.dropTo(obj, new THREE.Vector3(px, py, h * 0.5 + 0.009), 0.3);
-    this.log(`放置完成：${cfg.name} → ${binId} 盒`, 'ok');
+    try {
+      for (const step of plan.steps) {
+        if (step.target) {
+          const wi = plan.waypoints.findIndex((w) => w.key === step.target);
+          this.viz.setPhaseColor(STEP_COLORS[step.target] || 0x0f9d8f);
+          this.viz.focusSegment(wi - 1);
+        } else if (step.cmd === 'gripper') {
+          this.viz.setPhaseColor(step.arg === 'close' ? 0x14b8a6 : 0x8b5cf6);
+        } else {
+          this.viz.setPhaseColor(0x64748b);
+        }
 
-    // 9. 抬起并返回工作位
-    await this.robot.moveL(new THREE.Vector3(px, py, pl.z + 0.12), pYaw, 0, 0.5);
-    this.robot.setGripper(0.075);
+        if (step.cmd === 'move_j') {
+          const tg = plan.targets[step.target];
+          if (!tg) { failed = `缺少路径点 ${step.target}`; break; }
+          await this.robot.moveJ(tg.q, params.tJoint);
+        } else if (step.cmd === 'move_l') {
+          const tg = plan.targets[step.target];
+          if (!tg) { failed = `缺少路径点 ${step.target}`; break; }
+          await this.robot.moveL(tg.pos, tg.yaw, 0, params.tLinear);
+        } else if (step.cmd === 'gripper') {
+          if (step.arg === 'close') {
+            this.robot.setGripper(Math.max(0.016, plan.width - 0.002));
+            await sleep(420);
+            if (!attached) {
+              this.robot.attach(obj);
+              obj.userData.busy = true;
+              attached = true;
+              this.log(`夹爪闭合 ${(this.robot.gripperOpen * 1000).toFixed(0)} mm · 抓取 ${cfg.name}`);
+            }
+          } else {
+            this.robot.setGripper(0.092);
+            await sleep(240);
+            if (attached) {
+              await this.releaseAndDrop(obj, plan);
+              attached = false;
+            }
+          }
+        } else if (step.cmd === 'home') {
+          this.viz.fadePlan(0.3);
+          await this.robot.moveJ(POSE_READY.map((d) => d * D2R), params.tJoint);
+        } else if (step.cmd === 'wait') {
+          await sleep(step.seconds * 1000);
+        }
+      }
+    } finally {
+      this.viz.endTrail();
+    }
 
+    if (failed) return this.fail(failed);
+    if (attached) this.dropCarried();
+
+    this.viz.fadePlan(0.45);
     const cycle = (performance.now() - t0) / 1000;
     this.stats.done += 1;
     this.stats.attempts += 1;
@@ -427,12 +463,146 @@ class App {
     this.updateObjectList();
     this.updateStats();
 
-    await this.robot.moveJ(POSE_READY.map((d) => d * D2R), 1.1);
-
     this.setBusy(false, '就绪');
+    this.log(`运行轨迹 ${this.viz.trailLength().toFixed(2)} m · 节拍 ${cycle.toFixed(1)} s`);
     this.toast(`${cfg.name} 已放入 ${binId} 盒 · 节拍 ${cycle.toFixed(1)} s`);
     this.syncSliders();
     return true;
+  }
+
+  /* 规划过程可视化：路径点逐个生成 + 连线 */
+  async animatePlanning(plan) {
+    const pts = plan.waypoints;
+    this.viz.clearPlan();
+    this.viz.clearTrail();
+    for (let i = 0; i < pts.length; i++) {
+      this.viz.addWaypoint(pts[i], i);
+      this.setState(`路径规划 ${i + 1}/${pts.length}`);
+      await sleep(110);
+    }
+    this.viz.drawPlanLines(pts);
+    this.log(`路径规划完成：${pts.length} 个路径点 · 空间距离 ${planLength(pts).toFixed(2)} m`);
+  }
+
+  async releaseAndDrop(obj, plan) {
+    const p = new THREE.Vector3().setFromMatrixPosition(this.robot.tcp());
+    this.robot.releaseTo(this.scene);
+    obj.userData.busy = false;
+    obj.userData.inBin = plan.binId;
+    this.stats.slots[plan.binId] = (this.stats.slots[plan.binId] || 0) + 1;
+    await this.dropTo(obj, new THREE.Vector3(p.x, p.y, plan.h * 0.5 + 0.009), 0.3);
+    this.log(`放置完成：${plan.cfg.name} → ${plan.binId} 盒`, 'ok');
+  }
+
+  /* ------------------------------------------------------------ 代码面板 */
+  buildCodePanel() {
+    this.codeArea = $('codeArea');
+    this.codeHl = $('codeHl');
+    if (!this.codeArea) return;
+
+    this.codeArea.addEventListener('input', () => {
+      this.codeDirty = true;
+      this.highlightCode();
+      this.showCodeMsg('已修改，点击「运行」执行', 'dirty');
+    });
+    this.codeArea.addEventListener('scroll', () => {
+      this.codeHl.style.transform = `translate(${-this.codeArea.scrollLeft}px, ${-this.codeArea.scrollTop}px)`;
+    });
+    this.codeArea.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      const el = this.codeArea;
+      const a = el.selectionStart, b = el.selectionEnd;
+      el.value = el.value.slice(0, a) + '  ' + el.value.slice(b);
+      el.selectionStart = el.selectionEnd = a + 2;
+      this.codeDirty = true;
+      this.highlightCode();
+    });
+
+    $('btnRunCode').onclick = () => this.runCode();
+    $('btnResetCode').onclick = () => {
+      this.refreshProgram(true);
+      this.showCodeMsg('已还原为当前零件程序', '');
+    };
+    $('btnFold').onclick = () => {
+      const panel = $('codePanel');
+      panel.classList.toggle('folded');
+      $('btnFold').textContent = panel.classList.contains('folded') ? '▴' : '▾';
+    };
+    this.refreshProgram(true);
+  }
+
+  refreshProgram(force = false) {
+    if (!this.codeArea) return;
+    if (this.codeDirty && !force) return;
+    const obj = this.selected || this.world.objects.find((o) => !o.userData.inBin);
+    const label = $('codeTarget');
+    if (!obj) {
+      this.codeArea.value = '# 所有零件已进入料盒\n# 点击「重置实验场景」重新开始';
+      label.textContent = '无待抓取零件';
+      $('btnRunCode').disabled = true;
+      this.codeDirty = false;
+      this.highlightCode();
+      return;
+    }
+    $('btnRunCode').disabled = false;
+    label.textContent = `${obj.userData.cfg.name} → ${this.targetBin} 盒`;
+    this.codeArea.value = programFor({ cfg: obj.userData.cfg, binId: this.targetBin, params: this.params });
+    this.codeDirty = false;
+    this.highlightCode();
+  }
+
+  highlightCode() {
+    if (!this.codeHl) return;
+    const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const html = this.codeArea.value.split('\n').map((line) => {
+      const hash = line.indexOf('#');
+      const code = hash >= 0 ? line.slice(0, hash) : line;
+      const cmt = hash >= 0 ? line.slice(hash) : '';
+      let out;
+      const assign = code.match(/^(\s*)([A-Z][A-Z0-9_]*)(\s*=\s*)(-?\d+(?:\.\d+)?)(\s*)$/);
+      const call = code.match(/^(\s*)(move_j|move_l|gripper|home|wait)(\s+)?(\w+)?(\s*)$/);
+      if (assign) {
+        out = `${assign[1]}<span class="tok-key">${assign[2]}</span>${assign[3]}<span class="tok-num">${assign[4]}</span>${assign[5]}`;
+      } else if (call) {
+        out = `${call[1]}<span class="tok-cmd">${call[2]}</span>${call[3] || ''}${call[4] ? `<span class="tok-arg">${call[4]}</span>` : ''}${call[5] || ''}`;
+      } else {
+        out = esc(code);
+      }
+      return out + (cmt ? `<span class="tok-cmt">${esc(cmt)}</span>` : '');
+    }).join('\n');
+    this.codeHl.innerHTML = html + '\n';
+  }
+
+  showCodeMsg(text, kind = '') {
+    const el = $('codeMsg');
+    if (!el) return;
+    el.textContent = text;
+    el.className = kind;
+  }
+
+  async runCode() {
+    if (this.busy) return;
+    const obj = this.selected;
+    if (!obj) {
+      this.showCodeMsg('请先在左侧列表或 3D 视图中选择零件', 'error');
+      this.toast('请先选择零件');
+      return;
+    }
+    const { params, steps, errors } = parseProgram(this.codeArea.value);
+    if (errors.length) {
+      this.showCodeMsg(errors[0], 'error');
+      this.toast(errors[0]);
+      return;
+    }
+    this.showCodeMsg('程序已解析，开始规划…', 'ok');
+    await this.pickAndPlace(obj, this.targetBin, { params, steps });
+    this.showCodeMsg('执行完成，可继续修改参数', 'ok');
+  }
+
+  setState(text) {
+    $('stateText').textContent = text;
+    $('stateDot').parentElement.classList.add('busy');
   }
 
   nextSlot(binId) {
@@ -530,8 +700,13 @@ class App {
       obj.updateMatrixWorld(true);
     }
     this.selected = null;
+    if (this.viz) { this.viz.clearPlan(); this.viz.clearTrail(); this.viz.endTrail(); }
     this.stats = { done: 0, attempts: 0, lastCycle: null, slots: { A: 0, B: 0 } };
     this.teachPoints = [];
+    this.viz = null;
+    this.trailOn = true;
+    this.codeDirty = false;
+    this.params = { ...DEFAULT_PARAMS };
     this.renderTeachList();
     this.updateObjectList();
     this.updateStats();
@@ -541,6 +716,7 @@ class App {
     this.log('实验场景已重置');
     this.setBusy(false, '就绪');
     this.syncSliders();
+    this.refreshProgram(true);
   }
 
   /* ------------------------------------------------------------ 状态与日志 */
@@ -589,7 +765,7 @@ class App {
 
   setView(kind) {
     const views = {
-      iso: [[1.05, 1.95, 0.98], [0.0, 0.03, 0.26]],
+      iso: [[1.16, 2.12, 1.06], [0.0, 0.02, 0.27]],
       front: [[0.03, 2.25, 0.72], [0.0, 0.0, 0.24]],
       top: [[0.0, -0.2, 2.45], [0, -0.1, 0.02]],
     };
@@ -648,6 +824,12 @@ class App {
   loop() {
     const dt = Math.min(0.05, this.clock.getDelta());
     this.robot.update(dt);
+    if (this.viz) {
+      if (this.viz.recording) {
+        this.viz.pushTrail(new THREE.Vector3().setFromMatrixPosition(this.robot.tcp()));
+      }
+      this.viz.animateHalo(performance.now() / 1000);
+    }
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     const now = performance.now();
