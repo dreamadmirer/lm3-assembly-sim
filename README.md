@@ -62,10 +62,13 @@ python -m http.server 8123
 
 ### 路径规划与程序编辑
 - 每次抓取前先做**路径规划**：解算 5 个关键路径点（预抓取 / 抓取点 / 转运点 / 放置点 / 退回），在场景中逐个点亮并连成虚线路径，状态栏同步显示「路径规划 n/5」；
-- 右下角「任务程序」面板展示本次任务的可编辑程序，语法高亮；改完参数或指令顺序后点「运行」即按新程序执行；
-- 支持修改的参数：`APPROACH_H`、`GRASP_RATIO`、`TRANSIT_Z`、`PLACE_Z`、`RETREAT_H`、`T_JOINT`、`T_LINEAR`；
-- 支持的指令：`move_j <点>`、`move_l <点>`、`gripper open|close`、`home`、`wait <秒>`；路径点：`approach / grasp / lift / transit / place / retreat`；
-- 右下角「轨迹」按钮控制 TCP 运行轨迹显隐，轨迹按运动阶段着色（同一段颜色对应同一个路径点）。
+- 右下角「任务程序」面板展示**完整的 Python 程序**（约 60 行），按当前场景真实解算：
+  - 头部为任务说明与 8 个可调参数（`APPROACH_H`、`GRASP_RATIO`、`TRANSIT_Z`、`PLACE_Z`、`RETREAT_H`、`T_JOINT`、`T_LINEAR`、`GRIP_W`）；
+  - `WP` 字典给出 6 个路径点的 TCP 位姿 `[x, y, z, rx, ry, rz]`（m / deg），`Q` 字典给出对应关节角 `[J1..J6]`（deg）；
+  - `main()` 中按步骤调用 `robot.movej / movel / gripper_close / gripper_open / home`，每步带行内注释；
+- 面板支持 Python 语法高亮（关键字、字符串、数字、函数、注释、常量分色）、Tab 缩进、复制到剪贴板、折叠；
+- 代码是**可执行**的：内置解析器读取这份 Python 子集，改参数或调整指令顺序后点「运行」即按新程序重新规划并执行；未识别语句会在页脚报出行号；
+- 「轨迹」按钮控制 TCP 运行轨迹显隐，轨迹按运动阶段着色（同一段颜色对应同一个路径点）。
 
 ### 自动分拣
 点击「一键全部分拣」，机器人按形状类别连续完成 6 个零件的分拣，可随时中止。完成后统计完成次数、最近节拍与成功率。

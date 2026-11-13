@@ -109,6 +109,22 @@ class App {
     if (new URLSearchParams(location.search).has('auto')) {
       setTimeout(() => this.sortAll(), 500);
     }
+    if (new URLSearchParams(location.search).has('runcode')) {
+      setTimeout(() => {
+        this.selectObject(this.world.objects[0]);
+        setTimeout(() => $('btnRunCode').click(), 500);
+      }, 900);
+    }
+    if (new URLSearchParams(location.search).has('codetest')) {
+      setTimeout(() => {
+        const code = this.codeArea.value;
+        const r = parseProgram(code);
+        const edited = code.replace(/TRANSIT_Z(\s*)=\s*[\d.]+/, 'TRANSIT_Z   = 0.350');
+        const r2 = parseProgram(edited);
+        const broken = parseProgram(code.replace('robot.home()', 'robot.jump()'));
+        document.title = `CODE lines=${code.split('\n').length} steps=${r.steps.length} err=${r.errors.join('|') || 'none'} tz=${r2.params.transitZ} err2=${r2.errors.join('|') || 'none'} bad=${broken.errors.length}`;
+      }, 900);
+    }
     if (new URLSearchParams(location.search).has('selftest2')) {
       setTimeout(async () => {
         const obj = this.world.objects[3];
@@ -404,7 +420,8 @@ class App {
     await this.animatePlanning(plan);
 
     this.setBusy(true, `搬运 ${cfg.name}`);
-    this.robot.setGripper(Math.min(0.094, plan.width + params.openGap));
+    this.gripW = params.gripW != null ? params.gripW : plan.width;
+    this.robot.setGripper(Math.min(0.094, this.gripW + params.openGap));
     await sleep(160);
 
     this.viz.beginTrail();
@@ -427,14 +444,14 @@ class App {
         if (step.cmd === 'move_j') {
           const tg = plan.targets[step.target];
           if (!tg) { failed = `缺少路径点 ${step.target}`; break; }
-          await this.robot.moveJ(tg.q, params.tJoint);
+          await this.robot.moveJ(tg.q, step.time != null ? step.time : params.tJoint);
         } else if (step.cmd === 'move_l') {
           const tg = plan.targets[step.target];
           if (!tg) { failed = `缺少路径点 ${step.target}`; break; }
-          await this.robot.moveL(tg.pos, tg.yaw, 0, params.tLinear);
+          await this.robot.moveL(tg.pos, tg.yaw, 0, step.time != null ? step.time : params.tLinear);
         } else if (step.cmd === 'gripper') {
           if (step.arg === 'close') {
-            this.robot.setGripper(Math.max(0.016, plan.width - 0.002));
+            this.robot.setGripper(Math.max(0.016, this.gripW - 0.002));
             await sleep(420);
             if (!attached) {
               this.robot.attach(obj);
@@ -452,7 +469,7 @@ class App {
           }
         } else if (step.cmd === 'home') {
           this.viz.fadePlan(0.3);
-          await this.robot.moveJ(POSE_READY.map((d) => d * D2R), params.tJoint);
+          await this.robot.moveJ(POSE_READY.map((d) => d * D2R), step.time != null ? step.time : params.tJoint);
         } else if (step.cmd === 'wait') {
           await sleep(step.seconds * 1000);
         }
@@ -529,6 +546,18 @@ class App {
     });
 
     $('btnRunCode').onclick = () => this.runCode();
+    if ($('btnCopy')) {
+      $('btnCopy').onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(this.codeArea.value);
+          this.showCodeMsg('已复制到剪贴板', 'ok');
+        } catch (e) {
+          this.codeArea.select();
+          document.execCommand('copy');
+          this.showCodeMsg('已复制到剪贴板', 'ok');
+        }
+      };
+    }
     $('btnResetCode').onclick = () => {
       this.refreshProgram(true);
       this.showCodeMsg('已还原为当前零件程序', '');
@@ -547,40 +576,84 @@ class App {
     const obj = this.selected || this.world.objects.find((o) => !o.userData.inBin);
     const label = $('codeTarget');
     if (!obj) {
-      this.codeArea.value = '# 所有零件已进入料盒\n# 点击「重置实验场景」重新开始';
+      this.codePlan = null;
+      this.codeArea.value = '# -*- coding: utf-8 -*-\n# 所有零件已进入料盒\n# 点击「重置实验场景」重新开始';
       label.textContent = '无待抓取零件';
       $('btnRunCode').disabled = true;
       this.codeDirty = false;
       this.highlightCode();
       return;
     }
-    $('btnRunCode').disabled = false;
-    label.textContent = `${obj.userData.cfg.name} → ${this.targetBin} 盒`;
-    this.codeArea.value = programFor({ cfg: obj.userData.cfg, binId: this.targetBin, params: this.params });
+
+    const binId = this.targetBin;
+    let plan = null;
+    try {
+      plan = planTask({
+        obj, bin: BINS[binId], slot: this.nextSlot(binId), params: this.params, robot: this.robot,
+      });
+    } catch (err) {
+      plan = { error: String((err && err.message) || err) };
+    }
+    const ok = !!plan && !plan.error;
+    this.codePlan = ok ? plan : null;
+    label.textContent = `${obj.userData.cfg.name} → ${binId} 盒`;
+    this.codeArea.value = programFor(ok ? plan : { cfg: obj.userData.cfg, binId, params: this.params });
+    $('btnRunCode').disabled = !ok || this.busy;
     this.codeDirty = false;
     this.highlightCode();
-    this.showCodeMsg('可编辑参数后运行', '');
+    this.showCodeMsg(ok ? `位姿已解算 · ${plan.waypoints.length} 个路径点` : (plan && plan.error) || '无法解算', ok ? '' : 'error');
   }
 
   highlightCode() {
     if (!this.codeHl) return;
     const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const KW = /^(?:def|class|import|from|return|if|elif|else|for|while|in|not|and|or|is|None|True|False|pass|with|as|global|lambda|try|except|finally|raise)$/;
+    const TOKEN = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b/g;
+
+    let docMode = false;
     const html = this.codeArea.value.split('\n').map((line) => {
-      const hash = line.indexOf('#');
-      const code = hash >= 0 ? line.slice(0, hash) : line;
-      const cmt = hash >= 0 ? line.slice(hash) : '';
-      let out;
-      const assign = code.match(/^(\s*)([A-Z][A-Z0-9_]*)(\s*=\s*)(-?\d+(?:\.\d+)?)(\s*)$/);
-      const call = code.match(/^(\s*)(move_j|move_l|gripper|home|wait)(\s+)?(\w+)?(\s*)$/);
-      if (assign) {
-        out = `${assign[1]}<span class="tok-key">${assign[2]}</span>${assign[3]}<span class="tok-num">${assign[4]}</span>${assign[5]}`;
-      } else if (call) {
-        out = `${call[1]}<span class="tok-cmd">${call[2]}</span>${call[3] || ''}${call[4] ? `<span class="tok-arg">${call[4]}</span>` : ''}${call[5] || ''}`;
-      } else {
-        out = esc(code);
+      let code = line;
+      let cmt = '';
+      let quote = null;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (quote) { if (c === quote && line[i - 1] !== '\\') quote = null; continue; }
+        if (c === '"' || c === "'") { quote = c; continue; }
+        if (c === '#') { code = line.slice(0, i); cmt = line.slice(i); break; }
       }
+
+      // 三引号文档字符串（可跨行）整段按字符串着色
+      const triples = (code.match(/"""|'''/g) || []).length;
+      if (docMode) {
+        if (triples > 0) docMode = false;
+        return `<span class="tok-doc">${esc(code)}</span>` + (cmt ? `<span class="tok-cmt">${esc(cmt)}</span>` : '');
+      }
+      if (triples > 0) {
+        if (triples === 1) docMode = true;
+        return `<span class="tok-doc">${esc(code)}</span>` + (cmt ? `<span class="tok-cmt">${esc(cmt)}</span>` : '');
+      }
+
+      let out = '';
+      let pos = 0;
+      TOKEN.lastIndex = 0;
+      let m;
+      while ((m = TOKEN.exec(code)) !== null) {
+        const tk = m[0];
+        const at = m.index;
+        out += esc(code.slice(pos, at));
+        let cls = '';
+        if (tk[0] === '"' || tk[0] === "'") cls = 'tok-str';
+        else if (/^\d/.test(tk)) cls = 'tok-num';
+        else if (KW.test(tk)) cls = 'tok-kw';
+        else if (/^[A-Z][A-Z0-9_]{2,}$/.test(tk)) cls = 'tok-key';
+        else if (/^\s*\(/.test(code.slice(at + tk.length))) cls = 'tok-fn';
+        out += cls ? `<span class="${cls}">${esc(tk)}</span>` : esc(tk);
+        pos = at + tk.length;
+      }
+      out += esc(code.slice(pos));
       return out + (cmt ? `<span class="tok-cmt">${esc(cmt)}</span>` : '');
     }).join('\n');
+
     this.codeHl.innerHTML = html + '\n';
   }
 
@@ -736,7 +809,7 @@ class App {
     $('stateDot').parentElement.classList.toggle('busy', v);
     $('btnPick').disabled = v || !this.selected;
     $('btnSortAll').disabled = v && !this.sorting;
-    if ($('btnRunCode')) $('btnRunCode').disabled = v || !this.selected;
+    if ($('btnRunCode')) $('btnRunCode').disabled = v || !this.selected || !this.codePlan;
   }
 
   updateObjectList() {
