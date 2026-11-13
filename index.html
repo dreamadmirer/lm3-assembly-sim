@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LM3 人机协作装配仿真实验平台</title>
+<link rel="stylesheet" href="./css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="mark">LM3</div>
+    <div class="titles">
+      <h1>人机协作装配仿真实验平台</h1>
+      <p>乐白 LM3 六轴协作机器人 · 工作半径 638 mm · 额定负载 3 kg</p>
+    </div>
+  </div>
+  <nav class="modes" id="modes">
+    <button class="mode active" data-mode="pick">抓取放置</button>
+    <button class="mode" data-mode="sort">自动分拣</button>
+    <button class="mode" data-mode="teach">手动示教</button>
+  </nav>
+  <div class="state">
+    <span class="dot" id="stateDot"></span>
+    <span id="stateText">就绪</span>
+  </div>
+</header>
+
+<aside class="panel panel-left">
+  <div class="panel-head">
+    <h2>待抓取零件</h2>
+    <span class="chip" id="objCount">6</span>
+  </div>
+  <ul class="obj-list" id="objList"></ul>
+
+  <div class="section" id="pickControls">
+    <h3>放置目标</h3>
+    <div class="seg" id="binSeg">
+      <button data-bin="A" class="active">A 盒</button>
+      <button data-bin="B">B 盒</button>
+    </div>
+    <button class="btn primary" id="btnPick" disabled>执行抓取放置</button>
+    <button class="btn ghost" id="btnSortAll">一键全部分拣</button>
+  </div>
+
+  <div class="section hidden" id="teachControls">
+    <h3>关节示教</h3>
+    <div id="sliders" class="sliders"></div>
+    <div class="row">
+      <button class="btn ghost" id="btnZero">零位</button>
+      <button class="btn ghost" id="btnReady">工作位</button>
+    </div>
+    <div class="row">
+      <button class="btn" id="btnRecord">记录示教点</button>
+      <button class="btn" id="btnPlay">回放</button>
+    </div>
+    <div class="teach-list" id="teachList"></div>
+  </div>
+
+  <div class="section">
+    <button class="btn ghost wide" id="btnReset">重置实验场景</button>
+  </div>
+</aside>
+
+<aside class="panel panel-right">
+  <div class="panel-head"><h2>实时状态</h2><span class="chip soft" id="clock">0.0 s</span></div>
+  <div class="joints" id="joints"></div>
+
+  <div class="block">
+    <h3>末端位姿 <em>TCP</em></h3>
+    <div class="tcp-grid">
+      <div><label>X</label><b id="tcpX">—</b></div>
+      <div><label>Y</label><b id="tcpY">—</b></div>
+      <div><label>Z</label><b id="tcpZ">—</b></div>
+      <div><label>Rx</label><b id="tcpRx">—</b></div>
+      <div><label>Ry</label><b id="tcpRy">—</b></div>
+      <div><label>Rz</label><b id="tcpRz">—</b></div>
+    </div>
+  </div>
+
+  <div class="block">
+    <h3>夹爪</h3>
+    <div class="grip">
+      <div class="grip-bar"><i id="gripBar"></i></div>
+      <span id="gripVal">90 mm</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div><b id="statDone">0</b><label>完成次数</label></div>
+    <div><b id="statCycle">—</b><label>最近节拍</label></div>
+    <div><b id="statRate">100%</b><label>成功率</label></div>
+  </div>
+</aside>
+
+<div class="viewbar">
+  <button data-view="iso" class="active">等轴</button>
+  <button data-view="front">正视</button>
+  <button data-view="top">俯视</button>
+</div>
+
+<footer class="logbar">
+  <div class="log-head">运行日志</div>
+  <ul id="log"></ul>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>

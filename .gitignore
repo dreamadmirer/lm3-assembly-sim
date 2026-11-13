@@ -1,0 +1,7 @@
+# 本地工作区数据（不需要入库）
+.workbuddy/
+node_modules/
+build/
+*.log
+Thumbs.db
+.DS_Store
