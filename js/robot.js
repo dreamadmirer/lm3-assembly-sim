@@ -242,52 +242,29 @@ export class Robot {
       g.add(m);
       return m;
     };
-    // 法兰连接盘
+    // 法兰连接盘（银色金属）
     add(new THREE.CylinderGeometry(0.032, 0.032, 0.011, 40), MAT.flange, [0, 0, 0.0055], [Math.PI / 2, 0, 0]);
-    // 分件线（深色金属接缝）
-    add(new THREE.CylinderGeometry(0.0285, 0.0285, 0.004, 32), MAT.dark, [0, 0, 0.0125], [Math.PI / 2, 0, 0]);
-    // 白色立柱（官方图中的白色圆柱连接座）
-    add(new THREE.CylinderGeometry(0.028, 0.028, 0.022, 32), MAT.shell, [0, 0, 0.025], [Math.PI / 2, 0, 0]);
-    // 白色圆顶本体
-    const dome = add(new THREE.SphereGeometry(0.039, 40, 24), MAT.shell, [0, 0, 0.044]);
-    dome.scale.set(1, 1, 0.62);
+    // 分件线（深色接缝）
+    add(new THREE.CylinderGeometry(0.029, 0.029, 0.003, 32), MAT.dark, [0, 0, 0.013], [Math.PI / 2, 0, 0]);
+    // 白色圆筒本体（与机身同涂装，贴合官方首页渲染）
+    add(new THREE.CylinderGeometry(0.034, 0.036, 0.05, 40), MAT.shell, [0, 0, 0.039], [Math.PI / 2, 0, 0]);
+    // 品牌细红环（仅一线，呼应 LEBAI 标识）
+    add(new THREE.CylinderGeometry(0.0362, 0.0362, 0.0028, 40, 1, true), MAT.accent, [0, 0, 0.058], [Math.PI / 2, 0, 0]);
+    // 下部导轨（浅灰）
+    add(new THREE.BoxGeometry(0.088, 0.024, 0.008), MAT.band, [0, 0, 0.067]);
 
-    // LMG-90 三指自定心夹爪：红色联动臂 + 灰色夹垫（对齐官方渲染图）
-    const PIVOT_R = 0.03, PIVOT_Z = 0.042, ARM_L = 0.05;
-    this.armParam = { r: PIVOT_R, z: PIVOT_Z, l: ARM_L };
+    // 两指平行夹爪：白色指身 + 灰色夹垫
     this.fingers = [];
-    for (let i = 0; i < 3; i++) {
-      const th = Math.PI / 2 + (i * Math.PI * 2) / 3; // 3 × 120° 均布
-      const root = new THREE.Group();
-      root.position.set(Math.cos(th) * PIVOT_R, Math.sin(th) * PIVOT_R, PIVOT_Z);
-      root.rotation.z = th;
-      g.add(root);
-
-      // 联动臂绕本地 y 轴（切向）摆动
-      const pivot = new THREE.Group();
-      root.add(pivot);
-
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(ARM_L, 0.016, 0.015), MAT.finger);
-      arm.position.set(ARM_L / 2 - 0.005, 0, 0);
-      arm.castShadow = true;
-      pivot.add(arm);
-
-      // 铰链销（银色）
-      const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.02, 20), MAT.flange);
-      pivot.add(pin);
-
-      // 夹垫组件：随臂展开后反向补偿，始终保持竖直
-      const pad = new THREE.Group();
-      pad.position.set(ARM_L - 0.005, 0, 0);
-      pivot.add(pad);
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.02, 0.062), MAT.finger);
-      bar.castShadow = true;
-      pad.add(bar);
-      const face = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.018, 0.058), MAT.pad);
-      face.position.set(-0.0055, 0, 0);
-      pad.add(face);
-
-      this.fingers.push({ pivot, pad });
+    for (const s of [-1, 1]) {
+      const f = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, 0.062), MAT.shell);
+      f.castShadow = true;
+      f.receiveShadow = false;
+      f.position.set(s * 0.043, 0, 0.104);
+      g.add(f);
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.024, 0.056), MAT.pad);
+      pad.position.set(-s * 0.007, 0, -0.002);
+      f.add(pad);
+      this.fingers.push({ mesh: f, side: s });
     }
   }
 
@@ -301,12 +278,9 @@ export class Robot {
 
   applyGripper() {
     if (!this.fingers) return;
-    // 联动臂摆角 γ：使夹垫内工作面半径 = 开合的一半（自定心）
-    const half = this.gripperOpen / 2;
-    const g = Math.acos(THREE.MathUtils.clamp((half - 0.0235) / 0.045, -1, 1));
-    for (const f of this.fingers) {
-      f.pivot.rotation.y = -g; // 臂向外抬起
-      f.pad.rotation.y = g;   // 反向补偿，夹垫保持竖直
+    // 平行夹爪：指沿导轨对称滑移，夹垫内工作面间距 = 开合量
+    for (const { mesh, side } of this.fingers) {
+      mesh.position.x = side * (this.gripperOpen / 2 + 0.006);
     }
   }
 
