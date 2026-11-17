@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { makeStudioEnvScene } from './studio.js';
 import { Robot } from './robot.js';
 import { buildWorld } from './scene.js';
 import { BINS, OBJECTS, POSE_READY } from './config.js';
@@ -59,8 +59,11 @@ class App {
     this.controls.update();
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.58;
+    const envScene = makeStudioEnvScene();
+    this.scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+    if (envScene.dispose) envScene.dispose();
+    pmrem.dispose();
+    this.scene.environmentIntensity = 0.85;
 
     this.world = buildWorld(this.scene);
     this.viz = new PathViz(this.scene);

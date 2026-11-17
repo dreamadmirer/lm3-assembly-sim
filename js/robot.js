@@ -7,19 +7,23 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) 
 const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
 
 const MAT = {
-  // 亮面注塑白（参考 LEBAI LM3 实机：高光白 + 清漆）
+  // 缎面注塑白（对齐 LEBAI 官方渲染：柔和哑光 + 轻微清漆）
   shell: new THREE.MeshPhysicalMaterial({
-    color: 0xfbfcfe, roughness: 0.26, metalness: 0.02,
-    clearcoat: 0.55, clearcoatRoughness: 0.18, envMapIntensity: 0.9,
+    color: 0xfbfcfe, roughness: 0.3, metalness: 0.0,
+    clearcoat: 0.35, clearcoatRoughness: 0.25, envMapIntensity: 1.0,
   }),
   base: null, // 与壳体同色，见下方赋值
-  // 关节分隔环带：浅灰
-  band: new THREE.MeshPhysicalMaterial({ color: 0xb2b8c1, roughness: 0.36, metalness: 0.35, clearcoat: 0.2 }),
-  flange: new THREE.MeshPhysicalMaterial({ color: 0xc7ced7, roughness: 0.28, metalness: 0.65 }),
+  // 关节分隔环带：浅银灰（官方图中的灰色关节环）
+  band: new THREE.MeshPhysicalMaterial({ color: 0xb6bcc6, roughness: 0.38, metalness: 0.5, clearcoat: 0.25 }),
+  flange: new THREE.MeshPhysicalMaterial({ color: 0xcdd3db, roughness: 0.26, metalness: 0.6, clearcoat: 0.25 }),
   dark: new THREE.MeshPhysicalMaterial({ color: 0x2a2f37, roughness: 0.4, metalness: 0.4 }),
-  // 夹爪指：乐白夹爪的红色阳极氧化铝
-  finger: new THREE.MeshPhysicalMaterial({ color: 0xa8342c, roughness: 0.28, metalness: 0.72, clearcoat: 0.2 }),
-  accent: new THREE.MeshPhysicalMaterial({ color: 0xc0392b, roughness: 0.32, metalness: 0.5 }),
+  // 夹爪联动臂：乐白夹爪的红色阳极氧化铝
+  finger: new THREE.MeshPhysicalMaterial({ color: 0xb5342a, roughness: 0.26, metalness: 0.7, clearcoat: 0.35 }),
+  accent: new THREE.MeshPhysicalMaterial({ color: 0xc0392b, roughness: 0.3, metalness: 0.5 }),
+  // 基座状态 LED 环（乐白「灯光交互」元素）
+  led: new THREE.MeshStandardMaterial({ color: 0x0b3035, emissive: 0x2ad3c8, emissiveIntensity: 1.1, roughness: 0.35, metalness: 0.1 }),
+  // 夹爪垫：浅灰阻尼面
+  pad: new THREE.MeshStandardMaterial({ color: 0xdadfe6, roughness: 0.55, metalness: 0.05 }),
 };
 MAT.base = MAT.shell;
 
@@ -114,6 +118,11 @@ export class Robot {
     ring.castShadow = true;
     this.links[0].add(ring);
 
+    // 基座底部状态灯环（呼吸灯效）
+    const led = new THREE.Mesh(new THREE.CylinderGeometry(0.0726, 0.0726, 0.0022, 64, 1, true), MAT.led);
+    led.position.set(0, 0, 0.0016);
+    this.links[0].add(led);
+
     // LEBAI 标识（按工作位摆放，便于选择朝向镜头的一侧）
     this.setJoints(POSE_READY.map((d) => (d * Math.PI) / 180));
     const logoMat = this.makeLogoMaterial();
@@ -126,11 +135,14 @@ export class Robot {
     c.width = 800; c.height = 180;
     const g = c.getContext('2d');
     g.clearRect(0, 0, c.width, c.height);
-    const red = '#cf2318';
-    g.fillStyle = red;
+    // 官方标识：深灰 LEBAI 字 + 红色图形字
+    const red = '#d32027';
+    const ink = '#2b3038';
     g.textBaseline = 'middle';
+    g.fillStyle = ink;
     g.font = '900 132px "Arial Black", Arial, sans-serif';
     g.fillText('LEBAI', 6, 96);
+    g.fillStyle = red;
     g.font = '800 104px "PingFang SC", "Microsoft YaHei", sans-serif';
     g.fillText('乐白', 468, 100);
     // 品牌环形标记
@@ -230,22 +242,52 @@ export class Robot {
       g.add(m);
       return m;
     };
-    // 法连接盘
+    // 法兰连接盘
     add(new THREE.CylinderGeometry(0.032, 0.032, 0.011, 40), MAT.flange, [0, 0, 0.0055], [Math.PI / 2, 0, 0]);
-    // 夹爪本体（LMG-90 造型）
-    add(new THREE.BoxGeometry(0.082, 0.056, 0.048), MAT.dark, [0, 0, 0.036]);
-    add(new THREE.BoxGeometry(0.088, 0.016, 0.014), MAT.accent, [0, 0, 0.064]);
-    // 导轨
-    add(new THREE.BoxGeometry(0.094, 0.026, 0.008), MAT.finger, [0, 0, 0.070]);
-    // 两指
+    // 分件线（深色金属接缝）
+    add(new THREE.CylinderGeometry(0.0285, 0.0285, 0.004, 32), MAT.dark, [0, 0, 0.0125], [Math.PI / 2, 0, 0]);
+    // 白色立柱（官方图中的白色圆柱连接座）
+    add(new THREE.CylinderGeometry(0.028, 0.028, 0.022, 32), MAT.shell, [0, 0, 0.025], [Math.PI / 2, 0, 0]);
+    // 白色圆顶本体
+    const dome = add(new THREE.SphereGeometry(0.039, 40, 24), MAT.shell, [0, 0, 0.044]);
+    dome.scale.set(1, 1, 0.62);
+
+    // LMG-90 三指自定心夹爪：红色联动臂 + 灰色夹垫（对齐官方渲染图）
+    const PIVOT_R = 0.03, PIVOT_Z = 0.042, ARM_L = 0.05;
+    this.armParam = { r: PIVOT_R, z: PIVOT_Z, l: ARM_L };
     this.fingers = [];
-    for (const s of [-1, 1]) {
-      const f = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.030, 0.062), MAT.finger);
-      f.castShadow = true;
-      f.receiveShadow = false;
-      f.position.set(s * 0.045, 0, 0.104);
-      g.add(f);
-      this.fingers.push({ mesh: f, side: s });
+    for (let i = 0; i < 3; i++) {
+      const th = Math.PI / 2 + (i * Math.PI * 2) / 3; // 3 × 120° 均布
+      const root = new THREE.Group();
+      root.position.set(Math.cos(th) * PIVOT_R, Math.sin(th) * PIVOT_R, PIVOT_Z);
+      root.rotation.z = th;
+      g.add(root);
+
+      // 联动臂绕本地 y 轴（切向）摆动
+      const pivot = new THREE.Group();
+      root.add(pivot);
+
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(ARM_L, 0.016, 0.015), MAT.finger);
+      arm.position.set(ARM_L / 2 - 0.005, 0, 0);
+      arm.castShadow = true;
+      pivot.add(arm);
+
+      // 铰链销（银色）
+      const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.02, 20), MAT.flange);
+      pivot.add(pin);
+
+      // 夹垫组件：随臂展开后反向补偿，始终保持竖直
+      const pad = new THREE.Group();
+      pad.position.set(ARM_L - 0.005, 0, 0);
+      pivot.add(pad);
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.02, 0.062), MAT.finger);
+      bar.castShadow = true;
+      pad.add(bar);
+      const face = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.018, 0.058), MAT.pad);
+      face.position.set(-0.0055, 0, 0);
+      pad.add(face);
+
+      this.fingers.push({ pivot, pad });
     }
   }
 
@@ -259,8 +301,12 @@ export class Robot {
 
   applyGripper() {
     if (!this.fingers) return;
-    for (const { mesh, side } of this.fingers) {
-      mesh.position.x = side * (this.gripperOpen / 2 + 0.0055);
+    // 联动臂摆角 γ：使夹垫内工作面半径 = 开合的一半（自定心）
+    const half = this.gripperOpen / 2;
+    const g = Math.acos(THREE.MathUtils.clamp((half - 0.0235) / 0.045, -1, 1));
+    for (const f of this.fingers) {
+      f.pivot.rotation.y = -g; // 臂向外抬起
+      f.pad.rotation.y = g;   // 反向补偿，夹垫保持竖直
     }
   }
 

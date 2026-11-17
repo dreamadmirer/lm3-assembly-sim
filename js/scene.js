@@ -191,14 +191,51 @@ function buildObject(cfg) {
 }
 
 /* ---------------- 场景搭建 ---------------- */
-export function buildWorld(scene) {
-  scene.background = new THREE.Color(0xe9edf3);
-  scene.fog = new THREE.Fog(0xe9edf3, 5, 12);
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xd3dae5, 0.8);
+/** 柔和影棚背景：垂直浅色渐变（近似官方渲染棚底色） */
+function gradientBackground() {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 256;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.0, '#f5f7fb');
+  grad.addColorStop(0.5, '#e9edf4');
+  grad.addColorStop(1.0, '#d8dee9');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** 机器人底座下的软接触阴影 */
+function contactShadow(radius) {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, 'rgba(20, 28, 42, 0.34)');
+  g.addColorStop(0.55, 'rgba(20, 28, 42, 0.14)');
+  g.addColorStop(1, 'rgba(20, 28, 42, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(radius * 2, radius * 2),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+  );
+  return mesh;
+}
+
+export function buildWorld(scene) {
+  scene.background = gradientBackground();
+  scene.fog = new THREE.Fog(0xdde3ec, 6, 13);
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xd3dae5, 0.5);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xfffdf8, 2.9);
+  const key = new THREE.DirectionalLight(0xfff6ec, 2.35);
   key.position.set(1.7, 1.5, 2.5);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -212,11 +249,11 @@ export function buildWorld(scene) {
   key.shadow.normalBias = 0.022;
   scene.add(key);
 
-  const fill = new THREE.DirectionalLight(0xdfe9ff, 0.55);
+  const fill = new THREE.DirectionalLight(0xdfe9ff, 0.4);
   fill.position.set(-2.2, -1.8, 1.4);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0xffffff, 0.75);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.95);
   rim.position.set(-1.0, 2.4, 1.6);
   scene.add(rim);
 
@@ -269,6 +306,12 @@ export function buildWorld(scene) {
   plate.position.set(0, -0.28, 0.006);
   plate.receiveShadow = true;
   scene.add(plate);
+
+  // 底座软接触阴影（贴地渐变）
+  const soft = contactShadow(0.17);
+  soft.position.set(0, -0.28, 0.0022);
+  soft.renderOrder = 2;
+  scene.add(soft);
 
   return { table, bins, objects, plate, key, targetRing };
 }
