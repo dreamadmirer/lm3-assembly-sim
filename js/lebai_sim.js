@@ -349,6 +349,12 @@ export class LebaiSim {
 
   findGraspTarget() {
     const tcp = new THREE.Vector3().setFromMatrixPosition(this.robot.tcp());
+    // 规划阶段已确定目标工件时，优先夹它（容差放宽到 160 mm）
+    if (this.graspHint) {
+      const h = this.graspHint;
+      const hp = new THREE.Vector3().setFromMatrixPosition(h.matrixWorld);
+      if (!h.userData.inBin && Math.hypot(hp.x - tcp.x, hp.y - tcp.y) < 0.16) return h;
+    }
     let best = null;
     let bestD = 0.09;
     for (const obj of this.app.world.objects) {
@@ -358,6 +364,11 @@ export class LebaiSim {
       if (d < bestD) { bestD = d; best = obj; }
     }
     return best;
+  }
+
+  /** 任务层已知目标工件时，给夹爪一个提示（不影响 SDK 语义） */
+  hintGrasp(obj) {
+    this.graspHint = obj;
   }
 
   emit() {

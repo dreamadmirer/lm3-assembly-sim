@@ -5,7 +5,7 @@ import { Robot } from './robot.js';
 import { buildWorld } from './scene.js';
 import { BINS, OBJECTS, POSE_READY } from './config.js';
 import { PathViz } from './pathviz.js';
-import { planTask, planLength, programFor, parseProgram, DEFAULT_PARAMS, STEP_COLORS } from './planner.js';
+import { planTask, planLength, programFor, parseProgram, amplitudeFor, DEFAULT_PARAMS, STEP_COLORS } from './planner.js';
 import { LebaiSim, LebaiError, ROBOT_STATE } from './lebai_sim.js';
 import { LABS } from './labs.js';
 
@@ -432,13 +432,21 @@ class App {
 
     this.setBusy(true, `搬运 ${cfg.name}`);
     this.gripW = params.gripW != null ? params.gripW : plan.width;
-    this.robot.setGripper(Math.min(0.094, this.gripW + params.openGap));
+
+    // 与「任务程序」面板同一套官方 SDK 语义：movej / movel / wait_move / set_claw
+    const sdk = this.ensureSdk();
+    try {
+      sdk.start_sys();
+    } catch (e) {
+      return this.fail(e.message || String(e));
+    }
+    sdk.set_claw(20, 100); // 张开到最大
     await sleep(160);
 
     this.viz.beginTrail();
     this.viz.setTrailVisible(this.trailOn);
-    let attached = false;
     let failed = null;
+    const base = this.robot.root.position;
 
     try {
       for (const step of plan.steps) {
@@ -455,32 +463,31 @@ class App {
         if (step.cmd === 'move_j') {
           const tg = plan.targets[step.target];
           if (!tg) { failed = `缺少路径点 ${step.target}`; break; }
-          await this.robot.moveJ(tg.q, step.time != null ? step.time : params.tJoint);
+          sdk.movej(tg.q, 0.5, 0.45, step.time != null ? step.time : params.tJoint, 0);
+          await sdk.wait_move();
         } else if (step.cmd === 'move_l') {
           const tg = plan.targets[step.target];
           if (!tg) { failed = `缺少路径点 ${step.target}`; break; }
-          await this.robot.moveL(tg.pos, tg.yaw, 0, step.time != null ? step.time : params.tLinear);
+          sdk.movel({
+            x: tg.pos.x - base.x, y: tg.pos.y - base.y, z: tg.pos.z - base.z,
+            rx: Math.PI, ry: 0, rz: tg.yaw,
+          }, 0.3, 0.1, step.time != null ? step.time : params.tLinear, 0);
+          await sdk.wait_move();
+          if (sdk.lastError) { failed = sdk.lastError.message; sdk.lastError = null; break; }
         } else if (step.cmd === 'gripper') {
           if (step.arg === 'close') {
-            this.robot.setGripper(Math.max(0.016, this.gripW - 0.002));
+            sdk.hintGrasp(obj);
+            sdk.set_claw(60, amplitudeFor(Math.max(0.016, this.gripW - 0.002)));
             await sleep(420);
-            if (!attached) {
-              this.robot.attach(obj);
-              obj.userData.busy = true;
-              attached = true;
-              this.log(`夹爪闭合 ${(this.robot.gripperOpen * 1000).toFixed(0)} mm · 抓取 ${cfg.name}`);
-            }
           } else {
-            this.robot.setGripper(0.092);
+            sdk.set_claw(20, 100);
             await sleep(240);
-            if (attached) {
-              await this.releaseAndDrop(obj, plan);
-              attached = false;
-            }
           }
         } else if (step.cmd === 'home') {
           this.viz.fadePlan(0.3);
-          await this.robot.moveJ(POSE_READY.map((d) => d * D2R), step.time != null ? step.time : params.tJoint);
+          const homeQ = plan.homeQ || POSE_READY.map((d) => d * D2R);
+          sdk.movej(homeQ, 0.5, 0.45, step.time != null ? step.time : params.tJoint, 0);
+          await sdk.wait_move();
         } else if (step.cmd === 'wait') {
           await sleep(step.seconds * 1000);
         }
@@ -490,11 +497,11 @@ class App {
     }
 
     if (failed) return this.fail(failed);
-    if (attached) this.dropCarried();
+    if (this.robot.holder.children.length) this.dropCarried();
 
     this.viz.fadePlan(0.45);
     const cycle = (performance.now() - t0) / 1000;
-    this.stats.done += 1;
+    const placed = obj.userData.inBin === binId;
     this.stats.attempts += 1;
     this.stats.lastCycle = cycle;
     this.updateObjectList();
@@ -502,7 +509,9 @@ class App {
 
     this.setBusy(false, '就绪');
     this.log(`运行轨迹 ${this.viz.trailLength().toFixed(2)} m · 节拍 ${cycle.toFixed(1)} s`);
-    this.toast(`${cfg.name} 已放入 ${binId} 盒 · 节拍 ${cycle.toFixed(1)} s`);
+    this.toast(placed
+      ? `${cfg.name} 已放入 ${binId} 盒 · 节拍 ${cycle.toFixed(1)} s`
+      : `${cfg.name} 未落入 ${binId} 盒，请检查放置点`);
     this.syncSliders();
     return true;
   }
@@ -809,7 +818,7 @@ class App {
     if (inBin) {
       this.stats.slots[inBin] += 1;
       this.stats.done += 1;
-      this.log(`工件已放入 ${inBin} 盒`, 'ok');
+      this.log(`工件已放入 ${inBin} 盒（set_claw 释放）`, 'ok');
       this.updateStats();
       this.updateObjectList();
     } else {

@@ -259,6 +259,7 @@ def main():
     print('tcp:', robot.get_kin_data()['actual_tcp_pose'])
 
     try:
+        robot.set_claw(20, 100)                # 0 张开夹爪，准备接近
 ${body}
     except Exception as e:
         print('任务异常：', e)      # 运动不可达 / 关节超限 / 急停

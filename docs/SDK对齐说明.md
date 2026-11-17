@@ -35,6 +35,7 @@
 | `js/planner.js:programFor()` | 生成官方风格 Python：`lebai_sdk.init()` → `connect` → `stop_sys` → `start_sys` → `try: movej/movel/wait_move/set_claw` → `except` → `finally: stop_sys()`；`Q`（rad）/`WP`（m,rad,基座系）/`HOME_Q` 字典 |
 | `js/planner.js:parseProgram()` | 解析上述语法：常量替换、`Q/WP/HOME_Q` 字典、`movej/movel` 四参数、`set_claw`、`wait_move`、`try/except` 结构；不支持的循环会明确报错 |
 | `js/app.js:runCode()` | 逐条执行解析结果，运动入队、`wait_move` 阻塞；异常统一捕获与复位；用时统计 |
+| `js/app.js:pickAndPlace()` | **按钮抓放/自动分拣也走 `LebaiSim`**（`movej/movel/wait_move/set_claw`），与面板程序同源；`hintGrasp` 仅把已规划目标告诉夹爪，不改变 SDK 语义 |
 | `js/app.js:toggleEstop()` | 急停/复位按钮（`stop_move` + `ESTOP` → `stop_sys`+`start_sys`） |
 | `js/app.js:releaseObject()` | `set_claw` 张开时的工件释放，落在料盒内计入完成数 |
 

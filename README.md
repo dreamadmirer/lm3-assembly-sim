@@ -82,6 +82,7 @@ python -m http.server 8123
 - 代码面板按 `lebai_sdk` 官方例程生成：`init → connect → stop_sys → start_sys → movej/movel(pose,a,v,t,r) → wait_move → set_claw → finally stop_sys`
 - 关节角用 **rad**、位姿用 **m/rad（基座系）**，与实机一致；`t>0` 时忽略 a、v
 - 逐条执行解析结果，报错码对齐实机：`1001` 关节超限、`1002` 位姿不可达、`1003` 急停中
+- **抓取放置 / 自动分拣按钮与「运行」共用同一套 SDK 执行层**，因此右下角显示的程序与实际动作一致
 - 右下角「急停 / 复位」按钮：急停 = `stop_move + ESTOP`，复位 = `stop_sys → start_sys`
 - 差异与未实现项见 [docs/SDK对齐说明.md](docs/SDK对齐说明.md)
 
