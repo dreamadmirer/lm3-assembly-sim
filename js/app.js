@@ -6,6 +6,8 @@ import { buildWorld } from './scene.js';
 import { BINS, OBJECTS, POSE_READY } from './config.js';
 import { PathViz } from './pathviz.js';
 import { planTask, planLength, programFor, parseProgram, DEFAULT_PARAMS, STEP_COLORS } from './planner.js';
+import { LebaiSim, LebaiError, ROBOT_STATE } from './lebai_sim.js';
+import { LABS } from './labs.js';
 
 window.__errors = [];
 addEventListener('error', (e) => window.__errors.push('ERR ' + (e.message || e.type)));
@@ -33,6 +35,9 @@ class App {
     this.trailOn = true;
     this.codeDirty = false;
     this.params = { ...DEFAULT_PARAMS };
+    this.sdk = null;
+    this.estopActive = false;
+    this.labFlags = { editedOk: false, sawError: false, estopDone: false, codes: new Set() };
   }
 
   async init() {
@@ -124,7 +129,7 @@ class App {
         const r = parseProgram(code);
         const edited = code.replace(/TRANSIT_Z(\s*)=\s*[\d.]+/, 'TRANSIT_Z   = 0.350');
         const r2 = parseProgram(edited);
-        const broken = parseProgram(code.replace('robot.home()', 'robot.jump()'));
+        const broken = parseProgram(code.replace("robot.set_claw(GRIP_FORCE, GRIP_AMP)", 'robot.jump()'));
         document.title = `CODE lines=${code.split('\n').length} steps=${r.steps.length} err=${r.errors.join('|') || 'none'} tz=${r2.params.transitZ} err2=${r2.errors.join('|') || 'none'} bad=${broken.errors.length}`;
       }, 900);
     }
@@ -251,6 +256,9 @@ class App {
         this.setView(btn.dataset.view);
       };
     });
+
+    $('btnEstop').onclick = () => this.toggleEstop();
+    $('btnLabs').onclick = () => this.openLabs();
 
     $('btnTrail').onclick = () => {
       this.trailOn = !this.trailOn;
@@ -667,23 +675,100 @@ class App {
     el.className = kind;
   }
 
+  /** 建立（或复用）官方 SDK 语义的仿真客户端 */
+  ensureSdk() {
+    if (!this.sdk) {
+      this.sdk = new LebaiSim(this.robot, this);
+      this.sdk.onStateChange = (st) => this.onSdkState(st);
+      this.sdk.init();
+      this.sdk.connect('192.168.0.100');
+    }
+    return this.sdk;
+  }
+
+  onSdkState(st) {
+    const map = {
+      IDLE: ['IDLE 空闲', false],
+      MOVING: ['MOVING 运行中', true],
+      ESTOP: ['ESTOP 急停', true],
+    };
+    const [text, busy] = map[st] || [st, false];
+    $('stateText').textContent = text;
+    $('stateDot').parentElement.classList.toggle('busy', busy);
+    $('stateDot').parentElement.classList.toggle('estop', st === 'ESTOP');
+  }
+
+  /** 按官方 SDK 例程逐条执行面板中的 Python 程序 */
   async runCode() {
     if (this.busy) return;
-    const obj = this.selected;
-    if (!obj) {
-      this.showCodeMsg('请先在左侧列表或 3D 视图中选择零件', 'error');
-      this.toast('请先选择零件');
+    const prog = parseProgram(this.codeArea.value);
+    if (prog.errors.length) {
+      this.showCodeMsg(prog.errors[0], 'error');
+      this.toast(prog.errors[0]);
       return;
     }
-    const { params, steps, errors } = parseProgram(this.codeArea.value);
-    if (errors.length) {
-      this.showCodeMsg(errors[0], 'error');
-      this.toast(errors[0]);
+    if (!prog.poses.Q || !prog.poses.WP) {
+      this.showCodeMsg('缺少 Q / WP 位姿字典，无法执行', 'error');
       return;
     }
-    this.showCodeMsg('程序已解析，开始规划…', 'ok');
-    await this.pickAndPlace(obj, this.targetBin, { params, steps });
-    this.showCodeMsg('执行完成，可继续修改参数', 'ok');
+
+    const sdk = this.ensureSdk();
+    const wasEdited = this.codeDirty;
+    this.estopActive = false;
+    this.setBusy(true, '运行程序');
+    this.showCodeMsg('已连接控制器，正在执行…', 'ok');
+    const t0 = performance.now();
+    let error = null;
+
+    try {
+      sdk.start_sys();
+      for (const st of prog.steps) {
+        if (sdk.state === ROBOT_STATE.ESTOP) throw new LebaiError(1003, '急停触发，程序中止');
+        if (st.cmd === 'move_j') {
+          const q = prog.poses.Q[st.target];
+          if (!q) throw new LebaiError(1005, `Q['${st.target}'] 未定义`);
+          sdk.movej(q, st.a ?? 0.5, st.v ?? 0.2, st.t ?? 0, st.r ?? 0);
+        } else if (st.cmd === 'move_l') {
+          const p = prog.poses.WP[st.target];
+          if (!p) throw new LebaiError(1005, `WP['${st.target}'] 未定义`);
+          sdk.movel(p, st.a ?? 0.3, st.v ?? 0.1, st.t ?? 0, st.r ?? 0);
+        } else if (st.cmd === 'claw') {
+          sdk.set_claw(st.force, st.amp);
+        } else if (st.cmd === 'wait_move') {
+          await sdk.wait_move();
+          if (sdk.lastError) throw sdk.lastError;
+        } else if (st.cmd === 'home') {
+          const hq = prog.poses.HOME || prog.poses.Q.approach;
+          sdk.movej(hq, 0.5, 0.45, 0.8, 0);
+        } else if (st.cmd === 'wait') {
+          await sleep(st.seconds * 1000);
+        }
+      }
+      await sdk.wait_move();
+      if (sdk.lastError) throw sdk.lastError;
+    } catch (e) {
+      error = e;
+    }
+
+    const dt = ((performance.now() - t0) / 1000).toFixed(1);
+    this.setBusy(false, '就绪');
+    if (error) {
+      let msg = error.message || String(error);
+      if (msg === 'MOTION_STOPPED') msg = '运动被停止（急停 / stop_move），程序中止';
+      this.labFlags.sawError = true;
+      const code = /\[(\d{4})\]/.exec(msg);
+      if (code) this.labFlags.codes.add(code[1]);
+      this.showCodeMsg(`异常：${msg}`, 'error');
+      this.log(`程序异常：${msg}`, 'warn');
+      this.toast(msg);
+      if (this.robot.holder && this.robot.holder.children.length) this.dropCarried();
+      sdk.lastError = null;
+      this.sdk.lastError = null;
+    } else {
+      if (wasEdited) this.labFlags.editedOk = true;
+      this.showCodeMsg(`执行完成 · ${dt}s · 可继续修改参数`, 'ok');
+      this.log(`程序执行完成（${dt}s）`, 'ok');
+    }
   }
 
   setState(text) {
@@ -700,6 +785,36 @@ class App {
       { dx: 0.06, dy: 0.048, yaw: 0.06 },
     ];
     return grid[n % 4];
+  }
+
+  /** SDK 层释放工件：落在料盒内则计入完成数 */
+  releaseObject(obj) {
+    if (!obj) return;
+    obj.updateMatrixWorld(true);
+    const p = new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld);
+    this.robot.releaseTo(this.scene);
+    const h = obj.userData.height || 0.05;
+    let z = h / 2;
+    let inBin = null;
+    for (const [id, cfg] of Object.entries(BINS)) {
+      const [w, d] = cfg.size;
+      if (Math.abs(p.x - cfg.pos[0]) < w / 2 - 0.012 && Math.abs(p.y - cfg.pos[1]) < d / 2 - 0.012) {
+        z = 0.008 + h / 2;
+        inBin = id;
+      }
+    }
+    obj.userData.busy = false;
+    obj.userData.inBin = inBin;
+    this.dropTo(obj, new THREE.Vector3(p.x, p.y, z), 0.32);
+    if (inBin) {
+      this.stats.slots[inBin] += 1;
+      this.stats.done += 1;
+      this.log(`工件已放入 ${inBin} 盒`, 'ok');
+      this.updateStats();
+      this.updateObjectList();
+    } else {
+      this.log('工件已释放到台面', 'warn');
+    }
   }
 
   dropCarried() {
@@ -805,7 +920,100 @@ class App {
     this.refreshProgram(true);
   }
 
+  /* ------------------------------------------------------------ 实验指导 */
+  openLabs() {
+    if (!this.labOverlay) this.buildLabPanel();
+    this.renderLabPanel();
+    this.labOverlay.hidden = false;
+  }
+
+  buildLabPanel() {
+    const el = document.createElement('div');
+    el.className = 'lab-overlay';
+    el.hidden = true;
+    el.innerHTML = `
+      <div class="lab-card">
+        <header class="lab-head">
+          <div><b>仿真实验</b><span class="lab-sub">按官方 lebai_sdk 语义的动手实验</span></div>
+          <button class="lab-x" title="关闭">✕</button>
+        </header>
+        <nav class="lab-tabs"></nav>
+        <div class="lab-body"></div>
+      </div>`;
+    document.body.appendChild(el);
+    el.querySelector('.lab-x').onclick = () => { el.hidden = true; };
+    el.addEventListener('click', (e) => { if (e.target === el) el.hidden = true; });
+    this.labOverlay = el;
+    this.labTab = 'lab1';
+  }
+
+  labCheckState() {
+    const code = this.codeArea ? this.codeArea.value : '';
+    const steps = (() => {
+      try { return parseProgram(code).steps || []; } catch (e) { return []; }
+    })();
+    const has = (cmd) => steps.some((s) => s.cmd === cmd);
+    return {
+      lab1: {
+        c1: has('move_j') && has('move_l'),
+        c2: this.stats.done >= 1,
+        c3: this.labFlags.editedOk,
+        c4: this.labFlags.codes.size >= 1 || this.labFlags.sawError,
+      },
+      lab2: {
+        c1: this.stats.done >= 3,
+        c2: /\btry\s*:/.test(code) && /\bexcept\b/.test(code) && /\bfinally\s*:/.test(code),
+        c3: this.labFlags.estopDone,
+        c4: this.labFlags.codes.size >= 2,
+      },
+    };
+  }
+
+  renderLabPanel() {
+    if (!this.labOverlay) return;
+    const state = this.labCheckState();
+    const tabs = this.labOverlay.querySelector('.lab-tabs');
+    tabs.innerHTML = LABS.map((l) => `<button data-lab="${l.id}" class="${l.id === this.labTab ? 'active' : ''}">${l.title.split('·')[0].trim()}</button>`).join('');
+    tabs.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { this.labTab = b.dataset.lab; this.renderLabPanel(); };
+    });
+
+    const lab = LABS.find((l) => l.id === this.labTab) || LABS[0];
+    const checks = (state[this.labTab] || {});
+    const done = lab.checks.filter((c) => checks[c.id]).length;
+    const body = this.labOverlay.querySelector('.lab-body');
+    body.innerHTML = `
+      <div class="lab-title"><h3>${lab.title}</h3><span>${lab.level}</span><em>${done}/${lab.checks.length}</em></div>
+      <p class="lab-goal">${lab.goal}</p>
+      <h4>知识要点</h4><ul>${lab.knowledge.map((k) => `<li>${k}</li>`).join('')}</ul>
+      <h4>任务流程</h4><ol>${lab.steps.map((k) => `<li>${k}</li>`).join('')}</ol>
+      <h4>编程提示</h4><ul class="tips">${lab.tips.map((k) => `<li>${k}</li>`).join('')}</ul>
+      <h4>自检清单 <em>实时</em></h4>
+      <ul class="lab-checks">${lab.checks.map((c) => `<li class="${checks[c.id] ? 'ok' : ''}"><i>${checks[c.id] ? '✓' : '○'}</i>${c.text}</li>`).join('')}</ul>
+      <p class="lab-foot">完整评分标准见 <code>docs/实验设计.md</code>；SDK 差异见 <code>docs/SDK对齐说明.md</code>。</p>`;
+  }
+
   /* ------------------------------------------------------------ 状态与日志 */
+  /** 急停 / 复位（对应 stop_move + start_sys 安全流程） */
+  toggleEstop() {
+    const sdk = this.ensureSdk();
+    if (sdk.state === ROBOT_STATE.ESTOP) {
+      sdk.stop_sys();
+      sdk.start_sys();
+      if (this.estopActive) this.labFlags.estopDone = true;
+      this.estopActive = false;
+      $('btnEstop').textContent = '急停';
+      $('btnEstop').classList.remove('on');
+      this.log('急停已复位 · 手臂重新使能', 'ok');
+      return;
+    }
+    sdk.estop();
+    this.estopActive = true;
+    $('btnEstop').textContent = '复位';
+    $('btnEstop').classList.add('on');
+    this.toast('急停已触发，运动已停止');
+  }
+
   setBusy(v, text) {
     this.busy = v;
     $('stateText').textContent = text || (v ? '运行中' : '就绪');

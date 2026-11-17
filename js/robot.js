@@ -42,6 +42,7 @@ export class Robot {
     this.gripperRate = 0.35;
     this.holder = null;
     this.busy = false;
+    this.abortMotion = false;
   }
 
   async load(url, onProgress) {
@@ -497,6 +498,7 @@ export class Robot {
     const q0 = this.q.slice();
     const start = performance.now();
     for (;;) {
+      if (this.abortMotion) { this.abortMotion = false; throw new Error('MOTION_STOPPED'); }
       const t = Math.min(1, (performance.now() - start) / (duration * 1000));
       const e = easeInOut(t);
       this.setJoints(q0.map((v, i) => v + (target[i] - v) * e));
@@ -506,14 +508,19 @@ export class Robot {
   }
 
   async moveL(pos, yaw, tilt = 0, duration = 0.9) {
+    return this.moveLMatrix(this.localTarget(pos, yaw, tilt), duration);
+  }
+
+  /** 按目标位姿矩阵做笛卡尔直线运动（供 SDK 层 movel 调用） */
+  async moveLMatrix(target, duration = 0.9) {
     const startM = this.kin.fk(this.q);
-    const target = this.localTarget(pos, yaw, tilt);
     const p0 = new THREE.Vector3().setFromMatrixPosition(startM);
     const p1 = new THREE.Vector3().setFromMatrixPosition(target);
     const q0 = new THREE.Quaternion().setFromRotationMatrix(startM);
     const q1 = new THREE.Quaternion().setFromRotationMatrix(target);
     const start = performance.now();
     for (;;) {
+      if (this.abortMotion) { this.abortMotion = false; throw new Error('MOTION_STOPPED'); }
       const t = Math.min(1, (performance.now() - start) / (duration * 1000));
       const e = easeInOut(t);
       const M = new THREE.Matrix4().makeRotationFromQuaternion(q0.clone().slerp(q1, e));
@@ -526,6 +533,11 @@ export class Robot {
     // 末端精修
     const r = this.kin.solve(target, this.q, { iters: 120 });
     if (r.posErr < 5e-4) this.setJoints(r.q);
+  }
+
+  /** 停止当前运动（保持当前位置），对应 SDK stop_move */
+  stopMotion() {
+    this.abortMotion = true;
   }
 
   attach(obj) {

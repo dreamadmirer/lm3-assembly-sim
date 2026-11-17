@@ -115,13 +115,15 @@ export function planTask({ obj, bin, slot, params: p = DEFAULT_PARAMS, robot, st
 
   return {
     obj, binId: bin.id, cfg, h, yaw,
+    base: { x: robot.root.position.x, y: robot.root.position.y, z: robot.root.position.z },
+    homeQ: Array.isArray(robot.q) ? robot.q.slice() : null,
     width: graspWidth(cfg),
     params: { ...p },
     targets, waypoints, steps: (steps && steps.length ? steps : DEFAULT_STEPS).map((s) => ({ ...s })),
   };
 }
 
-/* ---------------- 程序文本（Python） ---------------- */
+/* ---------------- 程序文本（官方 lebai_sdk Python 风格） ---------------- */
 const WP_ORDER = ['approach', 'grasp', 'lift', 'transit', 'place', 'retreat'];
 
 const STEP_NOTE = {
@@ -133,23 +135,21 @@ const STEP_NOTE = {
   retreat: '退回',
 };
 
-/** 弧度 → 角度，并归一化到 (-180, 180] */
-function pyDeg(rad) {
-  const d = (rad * 180) / Math.PI;
-  return ((((d + 180) % 360) + 360) % 360) - 180;
-}
-
 const f3 = (v) => Number(v).toFixed(3);
-const f2 = (v) => Number(v).toFixed(2);
-const f1 = (v) => Number(v).toFixed(1);
+const f4 = (v) => Number(v).toFixed(4);
 
-function stepLine(code, note) {
-  return `    ${code.padEnd(40)}# ${note}`;
+export const CLAW_MIN = 0.014; // 夹爪最小开口 m
+export const CLAW_MAX = 0.095; // 夹爪最大开口 m
+
+/** 夹持宽度 → 官方 set_claw 的 amplitude（0–100，占最大行程的百分比） */
+export function amplitudeFor(width) {
+  const pct = ((width - CLAW_MIN) / (CLAW_MAX - CLAW_MIN)) * 100;
+  return Math.max(0, Math.min(100, Math.round(pct)));
 }
 
 /**
- * 生成可读的 Python 任务程序
- * plan 可以只带 {cfg, binId, params}（此时没有解算位姿，仅输出骨架）
+ * 生成官方 SDK 风格的可读 Python 任务程序
+ * plan 可只带 {cfg, binId, params}（此时没有解算位姿，仅输出骨架）
  */
 export function programFor(plan) {
   const p = { ...DEFAULT_PARAMS, ...(plan.params || {}) };
@@ -158,6 +158,7 @@ export function programFor(plan) {
   const targets = plan.targets || null;
   const width = plan.width != null ? plan.width : (p.gripW || 0.07);
   const steps = (plan.steps && plan.steps.length ? plan.steps : DEFAULT_STEPS);
+  const base = plan.base || { x: 0, y: 0, z: 0 };
 
   if (!targets) {
     return `# -*- coding: utf-8 -*-
@@ -169,85 +170,115 @@ raise RuntimeError("target pose unreachable")
 `;
   }
 
-  const key = (k) => `${JSON.stringify(k)}:`.padEnd(14);
-  const wpRows = [];
   const qRows = [];
+  const wpRows = [];
   for (const k of WP_ORDER) {
     const t = targets[k];
     if (!t) continue;
-    const rz = f1(pyDeg(t.yaw));
-    wpRows.push(`  ${key(k)}(${f3(t.pos.x)}, ${f3(t.pos.y)}, ${f3(t.pos.z)}, 180.0, 0.0, ${rz}),`);
-    qRows.push(`  ${key(k)}(${t.q.map((v) => f1(pyDeg(v))).join(', ')}),`);
+    qRows.push(`  '${k}': (${t.q.map((v) => f4(v)).join(', ')}),`);
+    const bx = t.pos.x - base.x;
+    const by = t.pos.y - base.y;
+    const bz = t.pos.z - base.z;
+    wpRows.push(`  '${k}': {'x': ${f3(bx)}, 'y': ${f3(by)}, 'z': ${f3(bz)}, 'rx': 3.1416, 'ry': 0.0, 'rz': ${f3(t.yaw)}},`);
   }
+
+  const homeQ = plan.homeQ || targets.approach.q;
+  const ampClose = amplitudeFor(Math.max(0.016, width - 0.002));
 
   let n = 0;
   const body = steps.map((s) => {
     n += 1;
     if (s.cmd === 'move_j') {
-      return stepLine(`robot.movej(Q[${JSON.stringify(s.target)}], T_JOINT)`, `${n} ${STEP_NOTE[s.target] || ''}`.trim());
+      const line = `        robot.movej(Q['${s.target}'], A_JOINT, V_JOINT, T_JOINT, 0)`;
+      return `        # ${n} ${STEP_NOTE[s.target] || ''}\n${line}\n        robot.wait_move()`;
     }
     if (s.cmd === 'move_l') {
-      return stepLine(`robot.movel(WP[${JSON.stringify(s.target)}], T_LINEAR)`, `${n} ${STEP_NOTE[s.target] || ''}`.trim());
+      const line = `        robot.movel(WP['${s.target}'], A_LINEAR, V_LINEAR, T_LINEAR, 0)`;
+      return `        # ${n} ${STEP_NOTE[s.target] || ''}\n${line}\n        robot.wait_move()`;
     }
     if (s.cmd === 'gripper') {
       const close = s.arg === 'close';
-      return stepLine(`robot.gripper_${close ? 'close' : 'open'}()`, `${n} ${close ? '夹紧零件' : '松开工件'}`);
+      const call = close
+        ? `        robot.set_claw(GRIP_FORCE, GRIP_AMP)   # 夹紧（力度, 开合度%）`
+        : `        robot.set_claw(20, 100)                # 张开到最大`;
+      return `        # ${n} ${close ? '夹紧零件' : '松开工件'}\n${call}`;
     }
-    if (s.cmd === 'home') return stepLine('robot.home()', `${n} 回工作位`);
-    if (s.cmd === 'wait') return stepLine(`time.sleep(${f2(s.seconds)})`, `${n} 等待`);
-    return stepLine('# 未知指令', '');
-  }).join('\n');
+    if (s.cmd === 'home') {
+      return `        # ${n} 回工作位\n        robot.movej(HOME_Q, A_JOINT, V_JOINT, T_JOINT, 0)\n        robot.wait_move()`;
+    }
+    if (s.cmd === 'wait') return `        time.sleep(${s.seconds.toFixed(2)})   # ${n} 等待`;
+    return `        # 未知指令`;
+  }).join('\n\n');
 
   return `# -*- coding: utf-8 -*-
 """LM3 抓取放置任务 · ${name} → ${bin} 盒
-由仿真平台按当前场景解算生成；修改参数或指令后点「运行」即可复现
+
+官方 Python SDK（lebai_sdk）风格；由仿真平台按当前场景解算生成。
+修改参数或路径点后点「运行」即可在仿真中复现。
 """
 import time
-from lebai import LebaiRobot
+import lebai_sdk
 
 ROBOT_IP    = "192.168.0.100"   # 控制器 IP
 APPROACH_H  = ${f3(p.approachH)}   # 预抓取高度 m（零件上方）
 GRASP_RATIO = ${f3(p.graspRatio)}   # 抓取高度 = 零件高 × 比例
-TRANSIT_Z   = ${f3(p.transitZ)}   # 转运高度 m
+TRANSIT_Z   = ${f3(p.transitZ)}   # 转运高度 m（基座系）
 PLACE_Z     = ${f3(p.placeZ)}   # 放置点距盒底 m
 RETREAT_H   = ${f3(p.retreatH)}   # 退回高度 m
-T_JOINT     = ${f3(p.tJoint)}   # 关节运动时长 s
-T_LINEAR    = ${f3(p.tLinear)}   # 直线运动时长 s
+T_JOINT     = ${f3(p.tJoint)}   # 关节运动时间 s（t>0 时 A/V 无效）
+T_LINEAR    = ${f3(p.tLinear)}   # 直线运动时间 s
 GRIP_W      = ${f3(width)}   # 夹持宽度 m
 
-# 路径点 TCP 位姿：[x, y, z, rx, ry, rz]，单位 m / deg
-WP = {
-${wpRows.join('\n')}
-}
+A_JOINT     = 0.500   # 关节加速度 rad/s2（T_JOINT=0 时生效）
+V_JOINT     = 0.450   # 关节速度 rad/s
+A_LINEAR    = 0.300   # 空间加速度 m/s2
+V_LINEAR    = 0.120   # 空间速度 m/s
+GRIP_FORCE  = 60      # 夹紧力 0–100
+GRIP_AMP    = ${String(ampClose).padStart(3)}      # 开合度 0–100（% 最大行程）
 
-# 各路径点对应关节角：[J1, J2, J3, J4, J5, J6]，单位 deg
+# 关节角（基座坐标系，单位 rad）
 Q = {
 ${qRows.join('\n')}
 }
 
+# 末端位姿（基座坐标系，单位 m / rad；rx=3.1416 表示工具 z 轴垂直向下）
+WP = {
+${wpRows.join('\n')}
+}
+
+# 工作位关节角（rad）
+HOME_Q = (${homeQ.map((v) => f4(v)).join(', ')})
+
+
 def main():
-    robot = LebaiRobot(ROBOT_IP)
-    robot.login()          # 上电并接管控制权
-    robot.start_task()     # 进入运动任务模式
-    robot.set_payload(3.0) # 末端负载 kg
+    lebai_sdk.init()
+    robot = lebai_sdk.connect(ROBOT_IP, False)   # 建立连接
+    robot.stop_sys()                             # 先停臂，确认初始安全状态
+    print('state:', robot.get_robot_state())     # IDLE / MOVING / ESTOP
+    robot.start_sys()                            # 启动手臂
+    print('tcp:', robot.get_kin_data()['actual_tcp_pose'])
 
+    try:
 ${body}
+    except Exception as e:
+        print('任务异常：', e)      # 运动不可达 / 关节超限 / 急停
+    finally:
+        robot.stop_sys()           # 无论成败都停止手臂
 
-    robot.stop_task()
-    robot.logout()         # 释放控制权
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 `;
 }
 
-/* ---------------- 程序解析（Python 子集） ---------------- */
+/* ---------------- 程序解析（官方 SDK 语法子集） ---------------- */
 const KNOWN_KEYS = Object.keys(LABELS);
 
 const NOOP_METHODS = new Set([
-  'login', 'logout', 'start_task', 'stop_task', 'print', 'main',
-  'connect', 'disconnect', 'enable', 'disable', 'set_payload', 'set_speed',
-  'wait_until', 'reset',
+  'init', 'connect', 'disconnect', 'start_sys', 'stop_sys', 'print', 'main',
+  'kinematics_forward', 'kinematics_inverse', 'pose_trans', 'pose_add',
+  'get_robot_state', 'get_kin_data', 'get_claw', 'set_payload', 'teach_mode',
+  'end_teach_mode', 'pause_move', 'resume_move', 'reset',
 ]);
 
 function stripComment(line) {
@@ -272,19 +303,78 @@ function waypointKey(args) {
   return null;
 }
 
-function lastNumber(args) {
-  const parts = args.split(',');
-  const last = parts[parts.length - 1].trim();
-  return /^-?\d+(?:\.\d+)?$/.test(last) ? parseFloat(last) : null;
+/** 从文本中提取 `名称 = { ... }` 块的内容 */
+function extractBlock(text, name) {
+  const re = new RegExp(`^${name}\\s*=\\s*\\{`, 'm');
+  const m = re.exec(text);
+  if (!m) return null;
+  const start = m.index + m[0].length;
+  const end = text.indexOf('\n}', start);
+  return text.slice(start, end < 0 ? text.length : end);
+}
+
+/** 解析 Q = {...} 关节角字典（rad） */
+function parseQBlock(text) {
+  const body = extractBlock(text, 'Q');
+  if (!body) return null;
+  const out = {};
+  for (const line of body.split(/\r?\n/)) {
+    const m = line.match(/^\s*['"]?([A-Za-z_]\w*)['"]?\s*:\s*\(([^)]*)\)/);
+    if (!m) continue;
+    const nums = m[2].split(',').map((x) => parseFloat(x)).filter((v) => Number.isFinite(v));
+    if (nums.length === 6) out[m[1].toLowerCase()] = nums;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** 解析 WP = {...} 笛卡尔位姿字典（m / rad） */
+function parseWPBlock(text) {
+  const body = extractBlock(text, 'WP');
+  if (!body) return null;
+  const out = {};
+  for (const line of body.split(/\r?\n/)) {
+    const m = line.match(/^\s*['"]?([A-Za-z_]\w*)['"]?\s*:\s*\{([^}]*)\}/);
+    if (!m) continue;
+    const pose = {};
+    const kv = m[2].matchAll(/['"]?([A-Za-z]+)['"]?\s*:\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)/g);
+    for (const item of kv) pose[item[1]] = parseFloat(item[2]);
+    if (['x', 'y', 'z', 'rx', 'ry', 'rz'].every((k) => k in pose)) out[m[1].toLowerCase()] = pose;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** 解析 HOME_Q = (...) */
+function parseHome(text) {
+  const m = text.match(/^HOME_Q\s*=\s*\(([^)]*)\)/m);
+  if (!m) return null;
+  const nums = m[1].split(',').map((x) => parseFloat(x)).filter((v) => Number.isFinite(v));
+  return nums.length === 6 ? nums : null;
+}
+
+/** 解析实参：数字 / 常量名 */
+function resolveArgs(args, consts) {
+  return args.split(',').map((raw) => {
+    const v = raw.trim();
+    if (!v) return null;
+    if (/^-?\d+(?:\.\d+)?$/.test(v)) return parseFloat(v);
+    if (consts[v] != null) return consts[v];
+    return null;
+  }).filter((v) => v !== null);
 }
 
 export function parseProgram(text) {
   const params = { ...DEFAULT_PARAMS };
   const steps = [];
   const errors = [];
+  const consts = {};
   const lines = String(text).split(/\r?\n/);
-  let depth = 0;   // 花括号/方括号块内
-  let doc = false; // 三引号字符串内
+  let depth = 0;
+  let doc = false;
+
+  // 先解析位姿字典与常量（与语句顺序无关）
+  const Q = parseQBlock(text);
+  const WP = parseWPBlock(text);
+  const HOME = parseHome(text);
 
   lines.forEach((raw, i) => {
     const no = i + 1;
@@ -312,7 +402,7 @@ export function parseProgram(text) {
 
     if (/^(import|from|def|class|return|pass|del|assert|global|nonlocal|yield)\b/.test(line)) return;
     if (/^(if|elif|else|for|while|try|except|finally|with|match|case)\b/.test(line)) {
-      if (!/^if\s+__name__/.test(line)) errors.push(`第 ${no} 行：不支持的控制流「${line}」`);
+      if (/^(for|while)\b/.test(line)) errors.push(`第 ${no} 行：仿真不支持循环，请展开为顺序指令`);
       return;
     }
 
@@ -322,22 +412,21 @@ export function parseProgram(text) {
       const name = assign[1];
       const value = assign[2].trim();
       if (/^-?\d+(?:\.\d+)?$/.test(value)) {
-        const meta = PARAM_META[name.toUpperCase()];
-        if (!meta) {
-          errors.push(`第 ${no} 行：未知参数 ${name}`);
-          return;
-        }
         const v = parseFloat(value);
-        if (v < meta.min || v > meta.max) {
-          errors.push(`第 ${no} 行：${name} 应在 ${meta.min} ~ ${meta.max} 之间`);
-          return;
+        consts[name] = v;
+        const meta = PARAM_META[name.toUpperCase()];
+        if (meta) {
+          if (v < meta.min || v > meta.max) {
+            errors.push(`第 ${no} 行：${name} 应在 ${meta.min} ~ ${meta.max} 之间`);
+            return;
+          }
+          params[meta.key] = v;
         }
-        params[meta.key] = v;
       }
-      return; // 对象绑定 / 列表赋值等，忽略
+      return;
     }
 
-    // 兼容旧式简写：move_j approach / gripper close / home / wait 0.5
+    // 兼容简写：move_j approach / gripper close / await 等
     const parts = line.split(/\s+/);
     if (['move_j', 'move_l'].includes(parts[0]) && parts.length === 2) {
       const t = parts[1].toLowerCase();
@@ -351,12 +440,6 @@ export function parseProgram(text) {
       return;
     }
     if (line === 'home') { steps.push({ cmd: 'home' }); return; }
-    if (parts[0] === 'wait' && parts.length === 2) {
-      const s = parseFloat(parts[1]);
-      if (!Number.isFinite(s) || s < 0 || s > 5) { errors.push(`第 ${no} 行：等待时间无效`); return; }
-      steps.push({ cmd: 'wait', seconds: s });
-      return;
-    }
 
     // 函数调用
     const call = line.match(/^(?:[A-Za-z_]\w*\s*\.\s*)*([A-Za-z_]\w*)\s*\((.*)\)\s*:?$/);
@@ -365,23 +448,39 @@ export function parseProgram(text) {
       return;
     }
     const meth = call[1].toLowerCase();
-    const args = call[2].trim();
+    const argsRaw = call[2].trim();
+    const nums = resolveArgs(argsRaw, consts);
 
     if (['movej', 'move_j', 'movel', 'move_l'].includes(meth)) {
       const cmd = meth.startsWith('movej') || meth === 'move_j' ? 'move_j' : 'move_l';
-      const k = waypointKey(args);
-      if (!k) { errors.push(`第 ${no} 行：${meth}() 未指定路径点`); return; }
+      if (/^HOME(_Q)?\b/i.test(argsRaw)) { steps.push({ cmd: 'home' }); return; }
+      const k = waypointKey(argsRaw);
+      if (!k) { errors.push(`第 ${no} 行：${meth}() 未指定路径点（应使用 Q['…'] 或 WP['…']）`); return; }
       if (!KNOWN_KEYS.includes(k)) { errors.push(`第 ${no} 行：未知路径点 ${k}`); return; }
+      const dict = cmd === 'move_j' ? Q : WP;
+      if (!dict || !dict[k]) errors.push(`第 ${no} 行：${cmd === 'move_j' ? 'Q' : 'WP'} 中未定义路径点 '${k}'`);
       const step = { cmd, target: k };
-      const dur = lastNumber(args);
-      if (dur !== null) step.time = dur;
+      if (nums.length >= 3) {
+        step.a = nums[0]; step.v = nums[1]; step.t = nums[2]; step.r = nums[3] || 0;
+        if (nums[2] > 0) step.time = nums[2];
+      } else if (nums.length === 1) {
+        step.time = nums[0]; // 旧式单参数：直接给时长
+      }
       steps.push(step);
       return;
     }
 
+    if (meth === 'wait_move') { steps.push({ cmd: 'wait_move' }); return; }
+
+    if (meth === 'set_claw') {
+      const [force, amp] = nums;
+      steps.push({ cmd: 'claw', force: force != null ? force : 50, amp: amp != null ? amp : 100 });
+      return;
+    }
+
     if (meth.includes('gripper')) {
-      if (/open/.test(meth) || /\bopen\b/.test(args)) steps.push({ cmd: 'gripper', arg: 'open' });
-      else if (/close/.test(meth) || /\bclose\b/.test(args)) steps.push({ cmd: 'gripper', arg: 'close' });
+      if (/open/.test(meth) || /\bopen\b/.test(argsRaw)) steps.push({ cmd: 'gripper', arg: 'open' });
+      else if (/close/.test(meth) || /\bclose\b/.test(argsRaw)) steps.push({ cmd: 'gripper', arg: 'close' });
       else errors.push(`第 ${no} 行：gripper_*() 需为 open 或 close`);
       return;
     }
@@ -389,7 +488,7 @@ export function parseProgram(text) {
     if (meth === 'home' || meth === 'move_home') { steps.push({ cmd: 'home' }); return; }
 
     if (['sleep', 'wait', 'delay'].includes(meth)) {
-      const s = parseFloat(args);
+      const s = nums[0];
       if (!Number.isFinite(s) || s < 0 || s > 5) { errors.push(`第 ${no} 行：等待时间无效`); return; }
       steps.push({ cmd: 'wait', seconds: s });
       return;
@@ -401,7 +500,7 @@ export function parseProgram(text) {
   });
 
   if (!steps.length) errors.push('程序中没有可执行的指令');
-  return { params, steps, errors };
+  return { params, steps, poses: { Q, WP, HOME }, errors };
 }
 
 export function planLength(waypoints) {

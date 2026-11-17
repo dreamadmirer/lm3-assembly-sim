@@ -78,6 +78,17 @@ python -m http.server 8123
 - 「记录示教点」保存当前关节角，「回放」按记录顺序匀速复现轨迹；
 - 「零位 / 工作位」一键回到标准姿态。
 
+### 官方 SDK 语义的任务程序
+- 代码面板按 `lebai_sdk` 官方例程生成：`init → connect → stop_sys → start_sys → movej/movel(pose,a,v,t,r) → wait_move → set_claw → finally stop_sys`
+- 关节角用 **rad**、位姿用 **m/rad（基座系）**，与实机一致；`t>0` 时忽略 a、v
+- 逐条执行解析结果，报错码对齐实机：`1001` 关节超限、`1002` 位姿不可达、`1003` 急停中
+- 右下角「急停 / 复位」按钮：急停 = `stop_move + ESTOP`，复位 = `stop_sys → start_sys`
+- 差异与未实现项见 [docs/SDK对齐说明.md](docs/SDK对齐说明.md)
+
+### 教学实验
+- 视图右下角「实验」按钮打开实验指导：两个实验（基础 / 进阶）的知识卡、流程、提示与**实时自检清单**
+- 完整实验设计（目标、相关知识、任务流程、调试检查点、预期现象、验收标准、界面展示要求）见 [docs/实验设计.md](docs/实验设计.md)
+
 ### 实时状态
 - 关节角（带行程条与超限变色）；
 - 末端 TCP 位姿（X/Y/Z 单位 mm，Rx/Ry/Rz 单位 deg）；
@@ -102,7 +113,11 @@ python -m http.server 8123
 │  ├─ robot.js             模型加载、末端夹爪、关节插补与直线运动
 │  ├─ scene.js             桌面、料盒、零件、灯光与环境
 │  ├─ studio.js            产品影棚环境（PMREM 柔光棚，近似官方渲染）
+│  ├─ lebai_sim.js         官方 lebai_sdk 语义的仿真层（movej/movel/set_claw/急停）
+│  ├─ labs.js              两个教学实验的内容与自检项
 │  └─ app.js               交互逻辑、任务编排、界面刷新
+├─ docs/SDK对齐说明.md      与官方 Python SDK 的差异对照与改造位置
+├─ docs/实验设计.md         两个本科生实验的完整设计（目标/流程/检查点/验收）
 ├─ assets/lm3.glb          7 连杆网格（来自 LM3机器人运动仿真 项目，约 1.6 MB）
 ├─ vendor/three/           Three.js r169（本地化，离线可用）
 └─ 乐白机器人三维模型-LM3.stp   原始 CAD 模型
