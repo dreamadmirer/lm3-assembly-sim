@@ -7,23 +7,23 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) 
 const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
 
 const MAT = {
-  // 缎面注塑白（对齐 LEBAI 官方渲染：柔和哑光 + 轻微清漆）
+  // 亮面注塑白（对齐官方渲染图：柔和强高光 + 清漆层）
   shell: new THREE.MeshPhysicalMaterial({
-    color: 0xfbfcfe, roughness: 0.3, metalness: 0.0,
-    clearcoat: 0.35, clearcoatRoughness: 0.25, envMapIntensity: 1.0,
+    color: 0xfdfeff, roughness: 0.18, metalness: 0.02,
+    clearcoat: 0.72, clearcoatRoughness: 0.12, envMapIntensity: 1.15,
   }),
   base: null, // 与壳体同色，见下方赋值
-  // 关节分隔环带：浅银灰（官方图中的灰色关节环）
-  band: new THREE.MeshPhysicalMaterial({ color: 0xb6bcc6, roughness: 0.38, metalness: 0.5, clearcoat: 0.25 }),
+  // 关节环带：较宽的浅灰哑光塑料环（官方渲染中的灰色关节包边）
+  band: new THREE.MeshPhysicalMaterial({ color: 0xc6ccd4, roughness: 0.48, metalness: 0.1, clearcoat: 0.12 }),
   flange: new THREE.MeshPhysicalMaterial({ color: 0xcdd3db, roughness: 0.26, metalness: 0.6, clearcoat: 0.25 }),
   dark: new THREE.MeshPhysicalMaterial({ color: 0x2a2f37, roughness: 0.4, metalness: 0.4 }),
-  // 夹爪联动臂：乐白夹爪的红色阳极氧化铝
-  finger: new THREE.MeshPhysicalMaterial({ color: 0xb5342a, roughness: 0.26, metalness: 0.7, clearcoat: 0.35 }),
+  // 夹爪：乐白红色阳极氧化铝
+  finger: new THREE.MeshPhysicalMaterial({ color: 0xcf352a, roughness: 0.28, metalness: 0.55, clearcoat: 0.35 }),
   accent: new THREE.MeshPhysicalMaterial({ color: 0xc0392b, roughness: 0.3, metalness: 0.5 }),
   // 基座状态 LED 环（乐白「灯光交互」元素）
   led: new THREE.MeshStandardMaterial({ color: 0x0b3035, emissive: 0x2ad3c8, emissiveIntensity: 1.1, roughness: 0.35, metalness: 0.1 }),
   // 夹爪垫：浅灰阻尼面
-  pad: new THREE.MeshStandardMaterial({ color: 0xdadfe6, roughness: 0.55, metalness: 0.05 }),
+  pad: new THREE.MeshStandardMaterial({ color: 0xe6e9ee, roughness: 0.55, metalness: 0.05 }),
 };
 MAT.base = MAT.shell;
 
@@ -89,7 +89,8 @@ export class Robot {
   buildLivery() {
     const J = JOINTS_MODEL; // 模型坐标
     const radial = [0.046, 0.046, 0.046, 0.0375, 0.0365, 0.0315];
-    const heights = [0.007, 0.009, 0.009, 0.008, 0.008, 0.007];
+    // 官方渲染中的灰色关节包边较宽（约 15–20 mm）
+    const heights = [0.016, 0.018, 0.018, 0.015, 0.014, 0.012];
     const up = new THREE.Vector3(0, 1, 0);
     const bandGeoCache = new Map();
 
@@ -128,6 +129,112 @@ export class Robot {
     const logoMat = this.makeLogoMaterial();
     this.addLogo(this.links[2], new THREE.Vector3(...J[1].p), new THREE.Vector3(...J[2].p), 0.080, logoMat, 0.22);
     this.addLogo(this.links[3], new THREE.Vector3(...J[2].p), new THREE.Vector3(...J[3].p), 0.086, logoMat, 0.58);
+
+    // 肩部交互屏（橙色灯带）与散热格栅——对齐官方渲染图的机身细节
+    // 列柱轴线位于底座中心，按世界高度向轴线打射线，贴到真实柱面
+    const col = new THREE.Vector3(0, -0.28, 0);
+    const face = new THREE.Vector3(0.44, 0.9, 0);
+    this.addColumnDecal(this.links[1], col, 0.248, face, 0.032, 0.02, this.makeScreenMaterial());
+    this.addColumnDecal(this.links[1], col, 0.192, face, 0.026, 0.028, this.makeVentMaterial());
+  }
+
+  /** 在竖直圆柱面上贴片：按世界高度向轴线打射线，找到朝向 faceDir 的柱面并贴合 */
+  addColumnDecal(mesh, axis, zWorld, faceDir, width, height, mat) {
+    if (!mesh) return;
+    mesh.updateMatrixWorld(true);
+    const dir = new THREE.Vector3(faceDir.x, faceDir.y, 0).normalize();
+    const target = new THREE.Vector3(axis.x, axis.y, zWorld);
+    const ray = new THREE.Raycaster(target.clone().addScaledVector(dir, 0.6), dir.clone().negate(), 0, 1.2);
+    const hit = ray.intersectObject(mesh, false)[0];
+    if (!hit || !hit.face) return;
+
+    const nWorld = hit.face.normal.clone().transformDirection(mesh.matrixWorld).normalize();
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+    const pLocal = hit.point.clone().applyMatrix4(inv);
+    const nLocal = nWorld.clone().transformDirection(inv).normalize();
+
+    // 水平切向 + 竖直方向构成贴片基
+    const up = new THREE.Vector3(0, 0, 1);
+    const xAxis = new THREE.Vector3().crossVectors(up, nLocal).normalize();
+    const yAxis = new THREE.Vector3().crossVectors(nLocal, xAxis).normalize();
+
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
+    plane.position.copy(pLocal).addScaledVector(nLocal, 0.0022);
+    plane.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, nLocal));
+    plane.renderOrder = 3;
+    mesh.add(plane);
+  }
+
+  makeScreenMaterial() {
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 288;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 512, 288);
+    // 深色玻璃面板
+    const r = 40;
+    g.fillStyle = '#1a1f26';
+    g.beginPath();
+    g.moveTo(r, 8); g.lineTo(512 - r, 8); g.quadraticCurveTo(504, 8, 504, 8 + r);
+    g.lineTo(504, 280 - r); g.quadraticCurveTo(504, 280, 512 - r, 280);
+    g.lineTo(r, 280); g.quadraticCurveTo(8, 280, 8, 280 - r);
+    g.lineTo(8, 8 + r); g.quadraticCurveTo(8, 8, r, 8);
+    g.closePath(); g.fill();
+    // 橙色状态灯带（官方渲染中的暖色高亮）
+    const grad = g.createLinearGradient(30, 0, 482, 0);
+    grad.addColorStop(0, '#ff6a1f');
+    grad.addColorStop(0.6, '#ff9a4d');
+    grad.addColorStop(1, '#ff5a12');
+    g.fillStyle = grad;
+    g.fillRect(34, 34, 300, 20);
+    // 其余指示灯
+    g.fillStyle = 'rgba(255,255,255,0.18)';
+    g.fillRect(350, 34, 60, 20);
+    g.fillRect(424, 34, 54, 20);
+    // 文本行
+    g.fillStyle = 'rgba(255,255,255,0.32)';
+    g.font = '600 34px Arial';
+    g.fillText('LM3  READY', 36, 128);
+    g.fillStyle = 'rgba(255,255,255,0.12)';
+    g.fillRect(36, 156, 440, 8);
+    g.fillRect(36, 180, 330, 8);
+    g.fillRect(36, 204, 390, 8);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    return new THREE.MeshStandardMaterial({
+      map: tex, transparent: true, roughness: 0.22, metalness: 0.1,
+      emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.35,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    });
+  }
+
+  makeVentMaterial() {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 296;
+    const g = c.getContext('2d');
+    g.clearRect(0, 0, 256, 296);
+    g.fillStyle = 'rgba(38, 44, 52, 0.85)';
+    for (let col = 0; col < 3; col++) {
+      for (let row = 0; row < 6; row++) {
+        const x = 26 + col * 76;
+        const y = 18 + row * 44;
+        const r = 7;
+        g.beginPath();
+        g.moveTo(x + r, y);
+        g.arcTo(x + 44, y, x + 44, y + 20, r);
+        g.arcTo(x + 44, y + 20, x, y + 20, r);
+        g.arcTo(x, y + 20, x, y, r);
+        g.arcTo(x, y, x + 44, y, r);
+        g.fill();
+      }
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    return new THREE.MeshStandardMaterial({
+      map: tex, transparent: true, roughness: 0.5, metalness: 0.2,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+    });
   }
 
   makeLogoMaterial() {
@@ -242,29 +349,40 @@ export class Robot {
       g.add(m);
       return m;
     };
-    // 法兰连接盘（银色金属）
-    add(new THREE.CylinderGeometry(0.032, 0.032, 0.011, 40), MAT.flange, [0, 0, 0.0055], [Math.PI / 2, 0, 0]);
-    // 分件线（深色接缝）
-    add(new THREE.CylinderGeometry(0.029, 0.029, 0.003, 32), MAT.dark, [0, 0, 0.013], [Math.PI / 2, 0, 0]);
-    // 白色圆筒本体（与机身同涂装，贴合官方首页渲染）
-    add(new THREE.CylinderGeometry(0.034, 0.036, 0.05, 40), MAT.shell, [0, 0, 0.039], [Math.PI / 2, 0, 0]);
-    // 品牌细红环（仅一线，呼应 LEBAI 标识）
-    add(new THREE.CylinderGeometry(0.0362, 0.0362, 0.0028, 40, 1, true), MAT.accent, [0, 0, 0.058], [Math.PI / 2, 0, 0]);
-    // 下部导轨（浅灰）
-    add(new THREE.BoxGeometry(0.088, 0.024, 0.008), MAT.band, [0, 0, 0.067]);
+    // 腕部白色圆顶盖（官方渲染中腕末的圆盖）
+    const dome = add(new THREE.SphereGeometry(0.038, 40, 20), MAT.shell, [0, 0, 0.012]);
+    dome.scale.set(1, 1, 0.44);
+    // 银色法兰圈
+    add(new THREE.CylinderGeometry(0.032, 0.032, 0.012, 40), MAT.flange, [0, 0, 0.0045], [Math.PI / 2, 0, 0]);
+    // 深色转接环
+    add(new THREE.CylinderGeometry(0.029, 0.029, 0.009, 32), MAT.dark, [0, 0, 0.031], [Math.PI / 2, 0, 0]);
+    // 红色夹爪本体
+    add(new THREE.BoxGeometry(0.056, 0.046, 0.03), MAT.finger, [0, 0, 0.05]);
+    // 红色导轨横梁（两指滑移的导向座）
+    add(new THREE.BoxGeometry(0.098, 0.03, 0.013), MAT.finger, [0, 0, 0.069]);
+    // 本体侧面的银色螺钉
+    for (const s of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.0055, 0.0055, 0.003, 16), MAT.flange, [s * 0.019, -0.0235, 0.05], [Math.PI / 2, 0, 0]);
+      add(new THREE.CylinderGeometry(0.0035, 0.0035, 0.003, 12), MAT.flange, [s * 0.017, 0.0235, 0.05], [Math.PI / 2, 0, 0]);
+    }
 
-    // 两指平行夹爪：白色指身 + 灰色夹垫
+    // 两指：红色指身 + 浅色夹垫
     this.fingers = [];
     for (const s of [-1, 1]) {
-      const f = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.03, 0.062), MAT.shell);
-      f.castShadow = true;
-      f.receiveShadow = false;
-      f.position.set(s * 0.043, 0, 0.104);
-      g.add(f);
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.024, 0.056), MAT.pad);
-      pad.position.set(-s * 0.007, 0, -0.002);
-      f.add(pad);
-      this.fingers.push({ mesh: f, side: s });
+      const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.034, 0.07), MAT.finger);
+      jaw.castShadow = true;
+      jaw.receiveShadow = false;
+      jaw.position.set(s * 0.045, 0, 0.105);
+      g.add(jaw);
+      // 夹垫（内侧浅灰面）
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(0.002, 0.028, 0.06), MAT.pad);
+      pad.position.set(-s * 0.008, 0, 0);
+      jaw.add(pad);
+      // 指尖端白色端帽
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.036, 0.008), MAT.shell);
+      tip.position.set(0, 0, -0.031);
+      jaw.add(tip);
+      this.fingers.push({ mesh: jaw, side: s });
     }
   }
 
@@ -278,9 +396,9 @@ export class Robot {
 
   applyGripper() {
     if (!this.fingers) return;
-    // 平行夹爪：指沿导轨对称滑移，夹垫内工作面间距 = 开合量
+    // 平行夹爪：指沿导轨对称滑移，使夹垫内工作面间距 = 开合量
     for (const { mesh, side } of this.fingers) {
-      mesh.position.x = side * (this.gripperOpen / 2 + 0.006);
+      mesh.position.x = side * (this.gripperOpen / 2 + 0.009);
     }
   }
 
