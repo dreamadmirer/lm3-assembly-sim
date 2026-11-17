@@ -152,6 +152,18 @@
   </div>
 </div>
 
+<script>
+// 兜底提示：直接双击 index.html（file://）或脚本未加载时，给出可操作的说明
+setTimeout(function () {
+  if (window.__app) return;
+  var t = document.getElementById('loaderText');
+  if (t && !window.__app) {
+    t.innerHTML = '加载超时：页面需要通过本地 HTTP 服务打开。<br>'
+      + '请双击 <b>start.bat</b>（会自动起服务并打开浏览器），<br>'
+      + '不要直接双击 index.html。';
+  }
+}, 8000);
+</script>
 <script type="module" src="./js/app.js"></script>
 </body>
 </html>
