@@ -93,7 +93,10 @@ python -m http.server 8123
 - 「零位 / 工作位」一键回到标准姿态。
 
 ### 官方 SDK 语义的任务程序
-- 代码面板按 `lebai_sdk` 官方例程生成：`init → connect → stop_sys → start_sys → movej/movel(pose,a,v,t,r) → wait_move → set_claw → finally stop_sys`
+- 代码面板按 `lebai_sdk` 官方例程生成（约 155 行）：`init → connect → stop_sys → start_sys`，随后 `get_robot_state / get_kin_data / get_claw / get_di` 状态反馈、`kinematics_inverse / pose_trans` 运动学校核
+- 每条运动记录 `motion_id` 并用 `wait_move(id)` 精确等待，`get_motion_state(id)` 打印状态
+- 夹爪用 `set_claw(force, amplitude)`，闭合后 `get_claw()` 回读；含 `set_do("FLANGE", 0, 1)` IO 握手
+- 全部包在 `try / except / finally: stop_sys()` 中；面板右上「⛶」可全屏查看代码（Esc 退出）
 - 关节角用 **rad**、位姿用 **m/rad（基座系）**，与实机一致；`t>0` 时忽略 a、v
 - 逐条执行解析结果，报错码对齐实机：`1001` 关节超限、`1002` 位姿不可达、`1003` 急停中
 - **抓取放置 / 自动分拣按钮与「运行」共用同一套 SDK 执行层**，因此右下角显示的程序与实际动作一致

@@ -32,7 +32,7 @@
 | --- | --- |
 | `js/lebai_sim.js`（新增） | `LebaiSim`：生命周期、状态机、运动队列（`enqueue` 返回 motion_id）、`movej/movel/wait_move/stop_move/pause_move/resume_move/get_motion_state`、`kinematics_forward/inverse/pose_trans/pose_add`、`set_claw/get_claw`、`get_di/set_do` 占位；`LebaiError` 错误码 1002/1003/1004/1005 |
 | `js/robot.js:508` | `moveLMatrix()`：按目标位姿矩阵做直线插补；`stopMotion()` 与 `abortMotion` 支持运动中急停 |
-| `js/planner.js:programFor()` | 生成官方风格 Python：`lebai_sdk.init()` → `connect` → `stop_sys` → `start_sys` → `try: movej/movel/wait_move/set_claw` → `except` → `finally: stop_sys()`；`Q`（rad）/`WP`（m,rad,基座系）/`HOME_Q` 字典 |
+| `js/planner.js:programFor()` | 生成官方风格 Python（约 155 行）：`init → connect → stop_sys → start_sys`、`get_robot_state/get_kin_data/get_claw/get_di` 反馈、`kinematics_inverse/pose_trans` 校核、`mid = movej(...)` + `wait_move(mid)` + `get_motion_state(mid)`、`set_claw` 夹紧/回读、`set_do` IO、`try/except/finally: stop_sys()`；`Q`（rad）/`WP`（m,rad,基座系）/`HOME_Q` 字典 |
 | `js/planner.js:parseProgram()` | 解析上述语法：常量替换、`Q/WP/HOME_Q` 字典、`movej/movel` 四参数、`set_claw`、`wait_move`、`try/except` 结构；不支持的循环会明确报错 |
 | `js/app.js:runCode()` | 逐条执行解析结果，运动入队、`wait_move` 阻塞；异常统一捕获与复位；用时统计 |
 | `js/app.js:pickAndPlace()` | **按钮抓放/自动分拣也走 `LebaiSim`**（`movej/movel/wait_move/set_claw`），与面板程序同源；`hintGrasp` 仅把已规划目标告诉夹爪，不改变 SDK 语义 |

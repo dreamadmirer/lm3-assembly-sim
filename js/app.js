@@ -566,6 +566,14 @@ class App {
     });
 
     $('btnRunCode').onclick = () => this.runCode();
+    if ($('btnExpand')) {
+      $('btnExpand').onclick = () => {
+        const panel = $('codePanel');
+        panel.classList.remove('folded');
+        panel.classList.toggle('full');
+        setTimeout(() => this.highlightCode(), 240);
+      };
+    }
     if ($('btnCopy')) {
       $('btnCopy').onclick = async () => {
         try {
@@ -584,9 +592,13 @@ class App {
     };
     $('btnFold').onclick = () => {
       const panel = $('codePanel');
+      panel.classList.remove('full');
       panel.classList.toggle('folded');
       $('btnFold').textContent = panel.classList.contains('folded') ? '▴' : '▾';
     };
+    addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') $('codePanel').classList.remove('full');
+    });
     this.refreshProgram(true);
   }
 
@@ -749,6 +761,8 @@ class App {
         } else if (st.cmd === 'home') {
           const hq = prog.poses.HOME || prog.poses.Q.approach;
           sdk.movej(hq, 0.5, 0.45, 0.8, 0);
+        } else if (st.cmd === 'do') {
+          sdk.set_do(st.scope, st.index, st.value);
         } else if (st.cmd === 'wait') {
           await sleep(st.seconds * 1000);
         }

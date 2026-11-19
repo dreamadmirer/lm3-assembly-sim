@@ -441,3 +441,11 @@ input[type="range"]::-webkit-slider-thumb {
 .lab-checks li.ok i { color: #0d9488; font-weight: 700; }
 .lab-foot { margin: 12px 0 0; font-size: 11px; color: var(--muted); }
 .lab-foot code { background: #f1f5f9; padding: 1px 5px; border-radius: 5px; }
+
+/* ---------- 代码面板全屏 ---------- */
+.codepanel.full {
+  left: 24px; right: 24px; top: 84px; bottom: 24px;
+  width: auto; height: auto;
+}
+.codepanel.full .cp-hl, .codepanel.full .cp-area { font-size: 12.5px; line-height: 1.62; padding: 14px 18px; }
+.codepanel.full .cp-btn.icon { transform: rotate(45deg); }
