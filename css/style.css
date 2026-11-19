@@ -268,13 +268,19 @@ input[type="range"]::-webkit-slider-thumb {
 .cp-body { flex: 1; min-height: 0; position: relative; background: #fafcfe; }
 .cp-edit { position: absolute; inset: 0; overflow: hidden; }
 .cp-hl, .cp-area {
-  position: absolute; inset: 0; margin: 0;
-  padding: 9px 12px;
+  position: absolute; margin: 0;
+  padding: 24px 12px 10px;
   font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 10.5px; line-height: 1.55; letter-spacing: .1px;
   white-space: pre; tab-size: 2;
 }
-.cp-hl { pointer-events: none; overflow: hidden; color: #0f172a; will-change: transform; }
+/* 高亮层必须随内容增高，否则滚动时会被自身高度裁掉（只显示首屏） */
+.cp-hl {
+  left: 0; right: 0; top: 0; min-height: 100%;
+  pointer-events: none; overflow: visible;
+  color: #0f172a; will-change: transform;
+}
+.cp-area { inset: 0; }
 .cp-area {
   background: transparent; color: transparent; caret-color: #0f172a;
   border: 0; outline: 0; resize: none; overflow: auto;
@@ -447,5 +453,19 @@ input[type="range"]::-webkit-slider-thumb {
   left: 24px; right: 24px; top: 84px; bottom: 24px;
   width: auto; height: auto;
 }
-.codepanel.full .cp-hl, .codepanel.full .cp-area { font-size: 12.5px; line-height: 1.62; padding: 14px 18px; }
+.codepanel.full .cp-hl, .codepanel.full .cp-area { font-size: 12.5px; line-height: 1.62; padding: 30px 18px 16px; }
 .codepanel.full .cp-btn.icon { transform: rotate(45deg); }
+
+/* ---------- 代码面板跳转 ---------- */
+.cp-nav {
+  position: absolute; top: 4px; right: 8px; z-index: 3;
+  display: flex; gap: 3px;
+  background: rgba(255,255,255,.86);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 2px; backdrop-filter: blur(6px);
+}
+.cp-nav button {
+  border: 0; background: transparent; color: #64748b;
+  font-size: 10px; padding: 2px 6px; border-radius: 6px; cursor: pointer;
+}
+.cp-nav button:hover { background: #eef2f7; color: #0f172a; }

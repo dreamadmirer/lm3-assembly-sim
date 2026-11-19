@@ -129,7 +129,7 @@ class App {
         const r = parseProgram(code);
         const edited = code.replace(/TRANSIT_Z(\s*)=\s*[\d.]+/, 'TRANSIT_Z   = 0.350');
         const r2 = parseProgram(edited);
-        const broken = parseProgram(code.replace("robot.set_claw(GRIP_FORCE, GRIP_AMP)", 'robot.jump()'));
+        const broken = parseProgram(code.replace('lebai.set_claw(GRIP_OPEN, GRIP_OPEN_AMP)', 'lebai.jump()'));
         document.title = `CODE lines=${code.split('\n').length} steps=${r.steps.length} err=${r.errors.join('|') || 'none'} tz=${r2.params.transitZ} err2=${r2.errors.join('|') || 'none'} bad=${broken.errors.length}`;
       }, 900);
     }
@@ -565,6 +565,12 @@ class App {
       this.highlightCode();
     });
 
+    document.querySelectorAll('.cp-nav button').forEach((b) => {
+      b.onclick = (e) => {
+        e.preventDefault();
+        this.jumpCode(b.dataset.jump);
+      };
+    });
     $('btnRunCode').onclick = () => this.runCode();
     if ($('btnExpand')) {
       $('btnExpand').onclick = () => {
@@ -687,6 +693,30 @@ class App {
     }).join('\n');
 
     this.codeHl.innerHTML = html + '\n';
+  }
+
+  /** 代码面板跳转：参数 / 主程序 / 末尾 */
+  jumpCode(where) {
+    const area = this.codeArea;
+    if (!area) return;
+    const text = area.value;
+    let idx = 0;
+    if (where === 'main') {
+      idx = text.indexOf('def main():');
+      if (idx < 0) idx = 0;
+    } else if (where === 'end') {
+      idx = text.length;
+    } else {
+      idx = text.indexOf('工艺参数');
+      idx = idx < 0 ? 0 : idx;
+      idx = text.lastIndexOf('\n', idx) + 1;
+    }
+    const line = text.slice(0, idx).split('\n').length - 1;
+    const lh = parseFloat(getComputedStyle(area).lineHeight) || 16;
+    area.scrollTop = where === 'end' ? area.scrollHeight : Math.max(0, line * lh - 8);
+    area.focus({ preventScroll: true });
+    area.setSelectionRange(idx, idx);
+    this.codeHl.style.transform = `translate(${-area.scrollLeft}px, ${-area.scrollTop}px)`;
   }
 
   showCodeMsg(text, kind = '') {

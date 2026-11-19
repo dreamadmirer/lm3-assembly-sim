@@ -231,7 +231,7 @@ raise RuntimeError("target pose unreachable")
     return `        # 未知指令`;
   }).join('\n\n');
 
-  return `# -*- coding: utf-8 -*-
+  const code = `# -*- coding: utf-8 -*-
 """LM3 抓取放置任务 · ${name} → ${bin} 盒
 
 官方 Python SDK（lebai_sdk）例程风格，由仿真平台按当前场景解算生成。
@@ -243,6 +243,14 @@ raise RuntimeError("target pose unreachable")
   2) movej / movel 立即返回 motion_id，wait_move(id) 精确等待；
   3) t > 0 时按时间运动，加速度 a、速度 v 失效；r 为交融半径（多段平滑）；
   4) rx = 3.1416 表示工具 z 轴垂直向下。
+
+SDK 调用速览（完整实现见下方 main()）：
+  lebai = lebai_sdk.connect(ROBOT_IP, DO_MERGE)      建立连接
+  lebai.movej(Q['approach'], a, v, t, r)             关节运动
+  lebai.movel(WP['grasp'],  a, v, t, r)              直线运动
+  lebai.wait_move(mid)                               等待运动完成
+  lebai.set_claw(GRIP_FORCE, GRIP_AMP)               夹爪（力度, 开合度%）
+  lebai.stop_sys()                                   停止手臂
 """
 import time
 import lebai_sdk
@@ -334,6 +342,8 @@ ${body}
 if __name__ == '__main__':
     main()
 `;
+  // 与官方例程一致：客户端对象命名为 lebai
+  return code.replace(/\brobot\b/g, 'lebai');
 }
 
 /* ---------------- 程序解析（官方 SDK 语法子集） ---------------- */

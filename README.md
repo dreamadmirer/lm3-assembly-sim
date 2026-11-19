@@ -79,7 +79,8 @@ python -m http.server 8123
 - 右下角「任务程序」面板展示**完整的 Python 程序**（约 60 行），按当前场景真实解算：
   - 头部为任务说明与 8 个可调参数（`APPROACH_H`、`GRASP_RATIO`、`TRANSIT_Z`、`PLACE_Z`、`RETREAT_H`、`T_JOINT`、`T_LINEAR`、`GRIP_W`）；
   - `WP` 字典给出 6 个路径点的 TCP 位姿 `[x, y, z, rx, ry, rz]`（m / deg），`Q` 字典给出对应关节角 `[J1..J6]`（deg）；
-  - `main()` 中按步骤调用 `robot.movej / movel / gripper_close / gripper_open / home`，每步带行内注释；
+  - `main()` 中按步骤调用 `lebai.movej / movel / wait_move / set_claw`（对象名与官方例程一致），每步带行内注释；
+- 代码面板右上「参数 / 主程序 / 末尾」可一键跳转，`⛶` 全屏查看（Esc 退出）；
 - 面板支持 Python 语法高亮（关键字、字符串、数字、函数、注释、常量分色）、Tab 缩进、复制到剪贴板、折叠；
 - 代码是**可执行**的：内置解析器读取这份 Python 子集，改参数或调整指令顺序后点「运行」即按新程序重新规划并执行；未识别语句会在页脚报出行号；
 - 「轨迹」按钮控制 TCP 运行轨迹显隐，轨迹按运动阶段着色（同一段颜色对应同一个路径点）。
