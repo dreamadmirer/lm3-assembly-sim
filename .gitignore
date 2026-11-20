@@ -8,3 +8,6 @@ Thumbs.db
 
 # 参考项目（本地对照用，不随平台发布）
 LM3机器人运动仿真/
+
+# WorkBuddy 应用标记文件（本地登记，不入库）
+.wbapp_*.genie
