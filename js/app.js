@@ -37,7 +37,10 @@ class App {
     this.params = { ...DEFAULT_PARAMS };
     this.sdk = null;
     this.estopActive = false;
-    this.labFlags = { editedOk: false, sawError: false, estopDone: false, codes: new Set() };
+    this.labFlags = {
+      editedOk: false, sawError: false, estopDone: false, codes: new Set(),
+      bestCycle: null, streak: 0, maxStreak: 0, shapes: new Set(), teachPlayed: false,
+    };
   }
 
   async init() {
@@ -385,6 +388,7 @@ class App {
     }
     this.setBusy(true, '回放示教轨迹');
     for (const q of this.teachPoints) await this.robot.moveJ(q, 1.4);
+    this.labFlags.teachPlayed = true;
     this.log(`回放完成：${this.teachPoints.length} 个示教点`);
     this.setBusy(false, '就绪');
     this.syncSliders();
@@ -504,6 +508,7 @@ class App {
     const placed = obj.userData.inBin === binId;
     this.stats.attempts += 1;
     this.stats.lastCycle = cycle;
+    this.noteCycle(cycle, cfg.name, placed);
     this.updateObjectList();
     this.updateStats();
 
@@ -819,8 +824,22 @@ class App {
       this.sdk.lastError = null;
     } else {
       if (wasEdited) this.labFlags.editedOk = true;
+      this.noteCycle(Number(dt), null, true);
       this.showCodeMsg(`执行完成 · ${dt}s · 可继续修改参数`, 'ok');
       this.log(`程序执行完成（${dt}s）`, 'ok');
+    }
+  }
+
+  /** 记录节拍与连续成功，供实验自检使用 */
+  noteCycle(cycle, shape, placed = true) {
+    if (!Number.isFinite(cycle)) return;
+    if (this.labFlags.bestCycle == null || cycle < this.labFlags.bestCycle) this.labFlags.bestCycle = cycle;
+    if (placed) {
+      this.labFlags.streak += 1;
+      this.labFlags.maxStreak = Math.max(this.labFlags.maxStreak, this.labFlags.streak);
+      if (shape) this.labFlags.shapes.add(shape);
+    } else {
+      this.labFlags.streak = 0;
     }
   }
 
@@ -903,6 +922,7 @@ class App {
 
   fail(msg) {
     this.stats.attempts += 1;
+    this.labFlags.streak = 0;
     this.dropCarried();
     this.setBusy(false, '异常');
     this.log(`失败：${msg}`, 'warn');
@@ -1006,6 +1026,14 @@ class App {
       try { return parseProgram(code).steps || []; } catch (e) { return []; }
     })();
     const has = (cmd) => steps.some((s) => s.cmd === cmd);
+    const constValue = (name) => {
+      const m = code.match(new RegExp(name + '\\s*=\\s*(-?\\d+(?:\\.\\d+)?)'));
+      return m ? parseFloat(m[1]) : null;
+    };
+    const offsetZ = (() => {
+      const m = code.match(/APPROACH_OFFSET\s*=\s*\{[^}]*'z':\s*(-?\d+(?:\.\d+)?)/);
+      return m ? parseFloat(m[1]) : null;
+    })();
     return {
       lab1: {
         c1: has('move_j') && has('move_l'),
@@ -1018,6 +1046,30 @@ class App {
         c2: /\btry\s*:/.test(code) && /\bexcept\b/.test(code) && /\bfinally\s*:/.test(code),
         c3: this.labFlags.estopDone,
         c4: this.labFlags.codes.size >= 2,
+      },
+      lab3: {
+        c1: offsetZ != null && Math.abs(offsetZ - 0.05) > 1e-6,
+        c2: this.labFlags.codes.has('1002'),
+        c3: /kinematics_inverse/.test(code) && /pose_trans/.test(code),
+        c4: this.stats.done >= 1,
+      },
+      lab4: {
+        c1: this.labFlags.bestCycle != null && this.labFlags.bestCycle <= 5.0,
+        c2: this.labFlags.maxStreak >= 3,
+        c3: (constValue('R_LINEAR') || 0) > 0,
+        c4: this.stats.done >= 3,
+      },
+      lab5: {
+        c1: this.stats.slots.A >= 4,
+        c2: this.stats.done >= 4,
+        c3: this.labFlags.shapes.size >= 2,
+        c4: this.stats.done >= 4 && this.stats.attempts <= 5,
+      },
+      lab6: {
+        c1: this.labFlags.teachPlayed && this.teachPoints.length >= 3,
+        c2: this.labFlags.estopDone,
+        c3: this.stats.done >= 1,
+        c4: this.labFlags.bestCycle != null,
       },
     };
   }

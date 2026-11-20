@@ -423,7 +423,7 @@ input[type="range"]::-webkit-slider-thumb {
 .lab-head b { font-size: 15px; }
 .lab-sub { margin-left: 10px; font-size: 11.5px; color: var(--muted); }
 .lab-x { border: 0; background: #f1f5f9; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; color: #475569; }
-.lab-tabs { display: flex; gap: 6px; padding: 0 20px 10px; border-bottom: 1px solid var(--line); }
+.lab-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 10px; border-bottom: 1px solid var(--line); }
 .lab-tabs button {
   border: 1px solid var(--line); background: #f8fafc; color: #475569;
   padding: 7px 14px; border-radius: 9px; font-size: 12px; cursor: pointer;
